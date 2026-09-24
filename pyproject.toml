@@ -12,6 +12,9 @@ anthropic = "^0.40"
 google-genai = "^1.0"
 mcp = "^2.2.0"
 python-dotenv = "^1.2.3"
+google-api-python-client = "^2.200.0"
+google-auth = "^2.58.0"
+google-auth-oauthlib = "^1.4.1"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0"

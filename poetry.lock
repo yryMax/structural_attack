@@ -776,6 +776,51 @@ files = [
 ]
 
 [[package]]
+name = "google-api-core"
+version = "2.38.0"
+description = "Google API client core library"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "google_api_core-2.38.0-py3-none-any.whl", hash = "sha256:8db2730375eba434bd75041fbe06b5374287407689ce132ac5650c8c8f042fcc"},
+    {file = "google_api_core-2.38.0.tar.gz", hash = "sha256:31e326eafa31b34f1db7a715f50f61dbca7e6e37277762f252ed90e6ce94c246"},
+]
+
+[package.dependencies]
+google-auth = ">=2.14.1,<3.0.0"
+googleapis-common-protos = ">=1.69.2,<2.0.0"
+opentelemetry-api = ">=1.44.0,<2.0.0"
+proto-plus = ">=1.26.1,<2.0.0"
+protobuf = ">=6.33.5,<8.0.0"
+requests = ">=2.33.0,<3.0.0"
+
+[package.extras]
+async-rest = ["aiohttp (>=3.13.4)", "google-auth[aiohttp] (>=2.14.1,<3.0.0)"]
+grpc = ["grpcio (>=1.59.0,<2.0.0)", "grpcio (>=1.75.1,<2.0.0) ; python_version >= \"3.14\"", "grpcio-status (>=1.59.0,<2.0.0)", "grpcio-status (>=1.75.1,<2.0.0) ; python_version >= \"3.14\""]
+testing = ["opentelemetry-sdk (>=1.44.0,<2.0.0)"]
+tracing = ["opentelemetry-instrumentation-grpc (>=0.65b0,<1.0.0)"]
+
+[[package]]
+name = "google-api-python-client"
+version = "2.200.0"
+description = "Google API Client Library for Python"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "google_api_python_client-2.200.0-py3-none-any.whl", hash = "sha256:c0c2c4072a110b7fcc30ac151744d4410cddaba99c53cb4e815463308952b638"},
+    {file = "google_api_python_client-2.200.0.tar.gz", hash = "sha256:82aa18b851328ea04867fd51c5a0c8da2e1b86ec45ce08487e902e7726d4ee50"},
+]
+
+[package.dependencies]
+google-api-core = ">=1.31.5,<2.0 || >=2.3.dev0,!=2.3.0,<3.0.0"
+google-auth = ">=1.32.0,!=2.24.0,!=2.25.0,<3.0.0"
+google-auth-httplib2 = ">=0.2.0,<1.0.0"
+httplib2 = ">=0.19.0,<1.0.0"
+uritemplate = ">=3.0.1,<5"
+
+[[package]]
 name = "google-auth"
 version = "2.58.0"
 description = "Google Authentication Library"
@@ -809,6 +854,41 @@ testing = ["aiohttp (>=3.8.0,<4.0.0) ; python_version < \"3.14\"", "aiohttp (>=3
 urllib3 = ["packaging (>=20.0)", "urllib3 (>=1.26.15,<3.0.0)"]
 
 [[package]]
+name = "google-auth-httplib2"
+version = "0.4.2"
+description = "Google Authentication Library: httplib2 transport"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "google_auth_httplib2-0.4.2-py3-none-any.whl", hash = "sha256:4298dd6b1415972d0c464b7177e6a69a595e7aec5b972222ecdca342f6009647"},
+    {file = "google_auth_httplib2-0.4.2.tar.gz", hash = "sha256:916225a6367e613c9af44d83f41688a599d3f687777846b8b91bec65085ed1f1"},
+]
+
+[package.dependencies]
+google-auth = ">=2.14.1,<3.0.0"
+httplib2 = ">=0.19.0,<1.0.0"
+
+[[package]]
+name = "google-auth-oauthlib"
+version = "1.4.1"
+description = "Google Authentication Library"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "google_auth_oauthlib-1.4.1-py3-none-any.whl", hash = "sha256:a1be43ec69fe563ac9b2c4d6fc4334b323b21cbdc59a638b5fa34dd4d5a2a348"},
+    {file = "google_auth_oauthlib-1.4.1.tar.gz", hash = "sha256:1a83f5f2a8421dedadaa3caf25b3a710dddf85a33a63144be41c2fc79174b106"},
+]
+
+[package.dependencies]
+google-auth = ">=2.15.0,!=2.43.0,!=2.44.0,!=2.45.0,<3.0.0"
+requests-oauthlib = ">=0.7.0"
+
+[package.extras]
+tool = ["click (>=6.0.0)"]
+
+[[package]]
 name = "google-genai"
 version = "1.75.0"
 description = "GenAI Python SDK"
@@ -836,6 +916,24 @@ websockets = ">=13.0.0,<17.0"
 aiohttp = ["aiohttp (>=3.10.11,<4.0.0)"]
 local-tokenizer = ["protobuf", "sentencepiece (>=0.2.0)"]
 pyopenssl = ["pyopenssl"]
+
+[[package]]
+name = "googleapis-common-protos"
+version = "1.75.3"
+description = "Common protobufs used in Google APIs"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "googleapis_common_protos-1.75.3-py3-none-any.whl", hash = "sha256:a018d2bf098ca9fb6faa08d5bb780e2a2c2f73c566f069761331386c9596d3f2"},
+    {file = "googleapis_common_protos-1.75.3.tar.gz", hash = "sha256:57c435ac2c68b108999b6db075d9053e4d7a936ba57b4a3d45667b1346f1738a"},
+]
+
+[package.dependencies]
+protobuf = ">=6.33.5,<8.0.0"
+
+[package.extras]
+grpc = ["grpcio (>=1.59.0,<2.0.0)"]
 
 [[package]]
 name = "h11"
@@ -893,6 +991,21 @@ asyncio = ["anyio (>=4.5.0,<5.0)"]
 http2 = ["h2 (>=3,<5)"]
 socks = ["socksio (==1.*)"]
 trio = ["trio (>=0.34.0,<1.0)"]
+
+[[package]]
+name = "httplib2"
+version = "0.32.0"
+description = "A comprehensive HTTP client library."
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "httplib2-0.32.0-py3-none-any.whl", hash = "sha256:dc6705cacdf3fb0a2aba7629fa33c90fd93e30035db0c157325826be177e4816"},
+    {file = "httplib2-0.32.0.tar.gz", hash = "sha256:48a0ef30a42db65d8f3399045e1d09ab0ba66e3b9efc360d07f80ea55d286025"},
+]
+
+[package.dependencies]
+pyparsing = ">=3.1,<4"
 
 [[package]]
 name = "httpx"
@@ -1959,6 +2072,23 @@ jupyter-server = ">=1.8,<3"
 test = ["pytest", "pytest-console-scripts", "pytest-jupyter", "pytest-tornasync"]
 
 [[package]]
+name = "oauthlib"
+version = "3.3.1"
+description = "A generic, spec-compliant, thorough implementation of the OAuth request-signing logic"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1"},
+    {file = "oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9"},
+]
+
+[package.extras]
+rsa = ["cryptography (>=3.0.0)"]
+signals = ["blinker (>=1.4.0)"]
+signedtoken = ["cryptography (>=3.0.0)", "pyjwt (>=2.0.0,<3)"]
+
+[[package]]
 name = "openai"
 version = "1.109.1"
 description = "The official Python library for the openai API"
@@ -2100,6 +2230,42 @@ files = [
 
 [package.dependencies]
 wcwidth = ">=0.1.4"
+
+[[package]]
+name = "proto-plus"
+version = "1.28.4"
+description = "Beautiful, Pythonic protocol buffers"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "proto_plus-1.28.4-py3-none-any.whl", hash = "sha256:4b01341272f8a348db3f003b6143109f83ab43091019d5181b3fcdf500ab32aa"},
+    {file = "proto_plus-1.28.4.tar.gz", hash = "sha256:5ff7ecad828e032a491fcb86947801768e32237f99dd049b649965b892ae9a63"},
+]
+
+[package.dependencies]
+protobuf = ">=6.33.5,<8.0.0"
+
+[package.extras]
+testing = ["google-api-core (>=2.25.0)"]
+
+[[package]]
+name = "protobuf"
+version = "7.36.2"
+description = ""
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl", hash = "sha256:cbc70b17ee27e28894c7fee8bb04be1abead49e936bc70eb60052531eee2079e"},
+    {file = "protobuf-7.36.2-cp310-abi3-manylinux2014_aarch64.whl", hash = "sha256:e11e1f0180583a2af89db6a2ecd9e8dc40aa6d2988ca175bfd0e6d12ea72d74e"},
+    {file = "protobuf-7.36.2-cp310-abi3-manylinux2014_s390x.whl", hash = "sha256:f4fee11ec330d238b34a05c9b675f693c20415d1c5bd7d5320cc2f8a798eb9cf"},
+    {file = "protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl", hash = "sha256:89f23aa53c24553a2416fd4fd1ec06f74fa42b14b546d8883128813f775bbfd2"},
+    {file = "protobuf-7.36.2-cp310-abi3-win32.whl", hash = "sha256:912c1221170e16c08d1f086762f563dd61ff83c18b5fa6652952dfaded66f728"},
+    {file = "protobuf-7.36.2-cp310-abi3-win_amd64.whl", hash = "sha256:a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353"},
+    {file = "protobuf-7.36.2-py3-none-any.whl", hash = "sha256:bdb3a345d48db958e6ce1f18e508beb0cc981d64f24088427549c866cd039f1e"},
+    {file = "protobuf-7.36.2.tar.gz", hash = "sha256:497d0463ff3316681da6c0b9e8d06cb465d61abce00b613ab42226175644d1bb"},
+]
 
 [[package]]
 name = "psutil"
@@ -2391,6 +2557,21 @@ cryptography = {version = ">=3.4.0", optional = true, markers = "extra == \"cryp
 
 [package.extras]
 crypto = ["cryptography (>=3.4.0)"]
+
+[[package]]
+name = "pyparsing"
+version = "3.3.3"
+description = "pyparsing - Classes and methods to define and execute parsing grammars"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "pyparsing-3.3.3-py3-none-any.whl", hash = "sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4"},
+    {file = "pyparsing-3.3.3.tar.gz", hash = "sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36"},
+]
+
+[package.extras]
+diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
 name = "python-dateutil"
@@ -2724,6 +2905,25 @@ urllib3 = ">=1.26,<3"
 [package.extras]
 socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<8)"]
+
+[[package]]
+name = "requests-oauthlib"
+version = "2.0.0"
+description = "OAuthlib authentication support for Requests."
+optional = false
+python-versions = ">=3.4"
+groups = ["main"]
+files = [
+    {file = "requests-oauthlib-2.0.0.tar.gz", hash = "sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9"},
+    {file = "requests_oauthlib-2.0.0-py2.py3-none-any.whl", hash = "sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36"},
+]
+
+[package.dependencies]
+oauthlib = ">=3.0.0"
+requests = ">=2.0.0"
+
+[package.extras]
+rsa = ["oauthlib[signedtoken] (>=3.0.0)"]
 
 [[package]]
 name = "rfc3339-validator"
@@ -3192,6 +3392,18 @@ files = [
 dev = ["flake8", "flake8-annotations", "flake8-bandit", "flake8-bugbear", "flake8-commas", "flake8-comprehensions", "flake8-continuation", "flake8-datetimez", "flake8-docstrings", "flake8-import-order", "flake8-literal", "flake8-modern-annotations", "flake8-noqa", "flake8-pyproject", "flake8-requirements", "flake8-typechecking-import", "flake8-use-fstring", "mypy", "pep8-naming", "types-PyYAML"]
 
 [[package]]
+name = "uritemplate"
+version = "4.2.0"
+description = "Implementation of RFC 6570 URI Templates"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "uritemplate-4.2.0-py3-none-any.whl", hash = "sha256:962201ba1c4edcab02e60f9a0d3821e82dfc5d2d6662a21abd533879bdb8a686"},
+    {file = "uritemplate-4.2.0.tar.gz", hash = "sha256:480c2ed180878955863323eea31b0ede668795de182617fef9c6ca09e6ec9d0e"},
+]
+
+[[package]]
 name = "urllib3"
 version = "2.8.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
@@ -3420,4 +3632,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "45072fb4fbe3aeaf71fa726e161f58a6e467d558f4513cf0b5b07a35af41ed30"
+content-hash = "07faecacda58effd3461dc4f0ba89244b0ab49f337613256fdc1da20b11a25b9"
