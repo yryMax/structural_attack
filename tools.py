@@ -1,13 +1,8 @@
 """Gmail + Google Calendar tools for miniagent, called directly via the Google REST APIs.
-
-Credentials come from google_auth.py (run `python google_auth.py` once). Each
-tool returns a plain object; call_tool() serializes it to a JSON string, so the
-model always receives JSON ({"error": ...} on failure). Emails follow the shape
-of gmail.users.messages.get with headers flattened to subject/from/to/date and
-the body decoded; calendar events are flattened so start/end are a single
-string (RFC3339 dateTime, or YYYY-MM-DD for all-day). Calendar tools act on the
-primary calendar and never email attendees.
 """
+# googleapiclient builds .users()/.messages()/.events() at runtime from the discovery doc,
+# so static checkers can't see them.
+# pylint: disable=no-member
 
 import base64
 import json

@@ -6,87 +6,36 @@
 Open the URL, pick a session in the sidebar. The page auto-refreshes as the
 session's .jsonl is appended while miniagent runs. Each record shows a readable
 rendered view; each tool result can be flipped between rendered text and the
-raw JSON string exactly as it appears in the .jsonl, and copied.
+raw JSON string exactly as it appears in the .jsonl, copied, and edited in
+either form. Saving an edit rewrites that record's "result" in the .jsonl (in
+place, so a running miniagent keeps appending) and regenerates the .md.
 
 Stdlib only, no dependencies.
 """
 
 import argparse
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+import runlog
+import webui
 
 LOG_DIR = Path("runs")  # overridden in main()
 
 
-PAGE = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>miniagent log viewer</title>
-<style>
-:root {
-  --bg: #ffffff; --panel: #f6f7f9; --border: #e3e6ea; --fg: #1a1d21;
-  --muted: #6b7280; --accent: #2563eb; --user: #eef4ff; --model: #f3f4f6;
-  --tool: #fff7ed; --toolbar: #eef2f7; --result: #f0fdf4; --danger: #b91c1c;
-  --code: #0f172a; --codebg: #f1f5f9;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0f1115; --panel: #161a20; --border: #2a2f37; --fg: #e5e7eb;
-    --muted: #9aa4b2; --accent: #60a5fa; --user: #16233b; --model: #1b1f26;
-    --tool: #2a2013; --toolbar: #1b2029; --result: #12241a; --danger: #f87171;
-    --code: #e5e7eb; --codebg: #0b1220;
-  }
-}
-* { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: var(--fg); background: var(--bg); }
-.layout { display: flex; height: 100vh; }
-aside { width: 260px; flex: 0 0 260px; border-right: 1px solid var(--border); background: var(--panel);
-  overflow-y: auto; padding: 12px; }
-aside h1 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 6px 12px; }
-.session { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: none; color: var(--fg);
-  padding: 8px 10px; border-radius: 8px; cursor: pointer; font: inherit; }
-.session:hover { background: var(--bg); }
-.session.active { background: var(--bg); border-color: var(--border); }
-.session .name { font-weight: 600; }
-.session .meta { font-size: 12px; color: var(--muted); }
-main { flex: 1; overflow-y: auto; }
-.toolbar { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-  padding: 10px 16px; background: var(--toolbar); border-bottom: 1px solid var(--border); }
-.toolbar .title { font-weight: 700; margin-right: auto; }
-button.tb { border: 1px solid var(--border); background: var(--bg); color: var(--fg); padding: 5px 10px;
-  border-radius: 7px; cursor: pointer; font: inherit; }
-button.tb.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.live { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
-.dot.off { background: #9ca3af; }
-.content { padding: 16px; max-width: 900px; }
+CSS = r"""
 .turn { margin: 22px 0 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; }
 .turn:first-child { border-top: none; margin-top: 4px; }
-.rec { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 8px 0; background: var(--model); position: relative; }
-.rec.user { background: var(--user); }
-.rec.tool { background: var(--tool); }
-.rec.result { background: var(--result); }
-.role { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; letter-spacing: .02em; }
-.role.danger { color: var(--danger); }
-.body { white-space: pre-wrap; word-break: break-word; }
-.call { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
-.call .fn { color: var(--accent); font-weight: 600; }
 .resultbox { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
 .resultbox pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 24em; overflow-y: auto; }
-.resultbox pre.raw { background: var(--codebg); color: var(--code); padding: 10px; border-radius: 6px; }
-.rawbar { margin-top: 6px; display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
-.rawbar button { border: 1px solid var(--border); background: var(--bg); color: var(--accent); cursor: pointer;
-  font: inherit; padding: 2px 8px; border-radius: 6px; }
-.empty { color: var(--muted); padding: 40px 16px; text-align: center; }
-</style>
-</head>
-<body>
+.resultbox textarea { display: block; width: 100%; margin: 4px 0 0; padding: 10px; border-radius: 6px;
+  border: 1px solid var(--accent); background: var(--codebg); color: var(--code); resize: vertical;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; outline: none; }
+"""
+
+BODY = r"""
 <div class="layout">
   <aside>
     <h1>Sessions</h1>
@@ -100,52 +49,32 @@ button.tb.on { background: var(--accent); color: #fff; border-color: var(--accen
     <div id="view" class="content"><div class="empty">No session selected.</div></div>
   </main>
 </div>
-<script>
+"""
+
+JS = r"""
 let current = null;       // session file name
 let lastMtime = null;
 let rawShown = new Set(); // record indices whose result is shown as raw JSON string
-
-const el = (t, cls, txt) => { const e = document.createElement(t); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
-const esc = s => (s == null ? "" : String(s));
-
-function compactArgs(args, maxVal = 80) {
-  if (!args) return "";
-  return Object.entries(args).map(([k, v]) => {
-    let s = typeof v === "string" ? v : JSON.stringify(v);
-    s = s.replace(/\s+/g, " ");
-    if (s.length > maxVal) s = s.slice(0, maxVal) + "…";
-    return k + "=" + s;
-  }).join(", ");
-}
-
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return; } catch (e) {}
-  const ta = el("textarea"); ta.value = text; document.body.appendChild(ta);
-  ta.select(); document.execCommand("copy"); ta.remove();
-}
+let drafts = new Map();   // record index -> {raw: bool, text} for results being edited
 
 async function loadSessions() {
   const r = await fetch("/api/sessions");
   const list = await r.json();
-  const box = document.getElementById("sessions");
-  box.innerHTML = "";
-  for (const s of list) {
-    const b = el("button", "session" + (s.name === current ? " active" : ""));
-    b.appendChild(el("div", "name", s.name.replace(/\.jsonl$/, "")));
-    b.appendChild(el("div", "meta", s.records + " records · " + s.mtime));
-    b.onclick = () => selectSession(s.name);
-    box.appendChild(b);
-  }
+  renderSidebar(document.getElementById("sessions"),
+    list.map(s => ({ key: s.name, name: s.name.replace(/\.jsonl$/, ""), meta: s.records + " records · " + s.mtime })),
+    current, selectSession);
 }
 
 function selectSession(name) {
-  if (current !== name) { current = name; lastMtime = null; rawShown = new Set(); }
+  if (current !== name && drafts.size && !confirm("Discard unsaved edits?")) return;
+  if (current !== name) { current = name; lastMtime = null; rawShown = new Set(); drafts = new Map(); }
   loadSessions();
   refresh(true);
 }
 
 async function refresh(force) {
   if (!current) return;
+  if (!force && drafts.size) return;   // don't re-render (and steal focus) under an open editor
   const r = await fetch("/api/session?name=" + encodeURIComponent(current));
   if (!r.ok) return;
   const data = await r.json();
@@ -213,22 +142,74 @@ function renderRecord(rec, i) {
     if (rec.declined) c.appendChild(el("div", "role danger", "🚫 result · " + name + " — user declined"));
     else c.appendChild(el("div", "role" + (isErr ? " danger" : ""), (isErr ? "❌ " : "") + "result · " + name));
     const box = el("div", "resultbox");
-    const isRaw = rawShown.has(i);
-    const shown = isRaw ? JSON.stringify(result) : result;   // raw = the string literal as logged
-    box.appendChild(el("pre", isRaw ? "raw" : null, shown));
     const bar = el("div", "rawbar");
-    const toggle = el("button", null, isRaw ? "Rendered" : "Raw");
-    toggle.onclick = () => { if (isRaw) rawShown.delete(i); else rawShown.add(i); refresh(true); };
-    const copy = el("button", null, "Copy");
-    copy.title = "copy what is shown";
-    copy.onclick = async () => {
-      await copyText(shown);
-      copy.textContent = "Copied ✓";
-      setTimeout(() => { copy.textContent = "Copy"; }, 1200);
-    };
-    bar.appendChild(toggle);
-    bar.appendChild(copy);
-    bar.appendChild(el("span", null, result.length + " chars"));
+    const btn = (label, fn) => { const b = el("button", null, label); b.onclick = fn; bar.appendChild(b); return b; };
+    const draft = drafts.get(i);
+    if (draft) {
+      const ta = el("textarea");
+      ta.value = draft.text;
+      ta.spellcheck = false;
+      const status = el("span");
+      const check = () => {
+        draft.text = ta.value;
+        ta.rows = Math.min(Math.max(ta.value.split("\n").length + 1, 4), 30);
+        let ok, msg;
+        if (draft.raw) {
+          try { ok = typeof JSON.parse(ta.value) === "string"; } catch (e) { ok = false; }
+          msg = ok ? "valid string literal" : "not a valid JSON string literal";
+        } else {
+          try { JSON.parse(ta.value); ok = true; } catch (e) { ok = false; }
+          msg = ok ? "result is valid JSON" : "result is not valid JSON (will be saved as-is)";
+        }
+        status.className = ok ? "ok" : "bad";
+        status.textContent = msg;
+        return ok;
+      };
+      const save = async () => {
+        if (draft.raw && !check()) return;
+        const value = draft.raw ? JSON.parse(ta.value) : ta.value;
+        const r = await fetch("/api/edit", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: current, i, old: rec.result, result: value }) });
+        const res = await r.json();
+        if (!r.ok) { status.className = "bad"; status.textContent = "save failed: " + res.error; return; }
+        drafts.delete(i);
+        refresh(true);
+      };
+      const cancel = () => { drafts.delete(i); refresh(true); };
+      ta.oninput = check;
+      ta.onkeydown = e => {
+        if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); check(); }
+        else if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
+        else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+      };
+      box.appendChild(ta);
+      const toggle = btn(draft.raw ? "Rendered" : "Raw", () => {
+        // convert the draft between its two forms
+        if (draft.raw) {
+          if (!check()) return;
+          draft.text = JSON.parse(ta.value);
+        } else {
+          draft.text = JSON.stringify(ta.value);
+        }
+        draft.raw = !draft.raw;
+        if (draft.raw) rawShown.add(i); else rawShown.delete(i);
+        refresh(true);
+      });
+      btn("Save", save).title = "Ctrl+S";
+      btn("Cancel", cancel).title = "Esc";
+      bar.appendChild(status);
+      check();
+      setTimeout(() => ta.focus(), 0);
+    } else {
+      const isRaw = rawShown.has(i);
+      const shown = isRaw ? JSON.stringify(result) : result;   // raw = the string literal as logged
+      box.appendChild(el("pre", isRaw ? "raw" : null, shown));
+      btn(isRaw ? "Rendered" : "Raw", () => { if (isRaw) rawShown.delete(i); else rawShown.add(i); refresh(true); });
+      const copy = bar.appendChild(copyButton(() => shown));
+      copy.title = "copy what is shown";
+      btn("Edit", () => { drafts.set(i, { raw: isRaw, text: shown }); refresh(true); });
+      bar.appendChild(el("span", null, result.length + " chars"));
+    }
     box.appendChild(bar);
     c.appendChild(box);
     return c;
@@ -238,10 +219,9 @@ function renderRecord(rec, i) {
 
 loadSessions();
 setInterval(() => { if (current) refresh(false); else loadSessions(); }, 1500);
-</script>
-</body>
-</html>
 """
+
+PAGE = webui.page("miniagent log viewer", CSS, BODY, JS)
 
 
 def _sessions_payload(log_dir: Path):
@@ -250,50 +230,72 @@ def _sessions_payload(log_dir: Path):
         try:
             with p.open(encoding="utf-8") as f:
                 n = sum(1 for line in f if line.strip())
-            mtime = __import__("datetime").datetime.fromtimestamp(p.stat().st_mtime).strftime("%m-%d %H:%M:%S")
+            mtime = webui.mtime_str(p)
         except OSError:
             continue
         items.append({"name": p.name, "records": n, "mtime": mtime})
     return items
 
 
-def _session_payload(log_dir: Path, name: str):
-    if not name or "/" in name or "\\" in name or not name.endswith(".jsonl"):
-        return None
-    p = (log_dir / name).resolve()
-    if p.parent != log_dir.resolve() or not p.is_file():
-        return None
-    raw = p.read_text(encoding="utf-8")
-    records = []
-    for line in raw.splitlines():
+def _session_path(log_dir: Path, name: str):
+    return webui.safe_file(log_dir, name, ".jsonl")
+
+
+def _parse_lines(lines):
+    """Yield (line_index, record) for every parseable record; record i in the UI is the i-th yielded."""
+    for li, line in enumerate(lines):
         line = line.strip()
         if line:
             try:
-                records.append(json.loads(line))
+                yield li, json.loads(line)
             except json.JSONDecodeError:
                 pass
+
+
+def _session_payload(log_dir: Path, name: str):
+    p = _session_path(log_dir, name)
+    if p is None:
+        return None
+    records = [rec for _, rec in _parse_lines(p.read_text(encoding="utf-8").splitlines())]
     return {"records": records, "mtime": p.stat().st_mtime}
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):  # quiet
-        pass
+def _edit_result(log_dir: Path, name: str, i: int, old, new: str):
+    """Replace record i's "result" if it is still `old`. Returns an error string or None.
 
-    def _send(self, code, body, ctype):
-        data = body.encode("utf-8") if isinstance(body, str) else body
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+    Rewrites in place (same inode) rather than via rename: a running miniagent holds
+    the .jsonl/.md open in append mode and would otherwise keep writing to the old file.
+    """
+    p = _session_path(log_dir, name)
+    if p is None:
+        return "session not found"
+    with p.open("r+", encoding="utf-8") as f:
+        lines = f.read().split("\n")
+        found = next((x for k, x in enumerate(_parse_lines(lines)) if k == i), None)
+        if found is None:
+            return "record not found"
+        li, rec = found
+        if rec.get("type") != "tool_result":
+            return "only tool results can be edited"
+        if rec.get("result") != old:
+            return "record changed since it was loaded; reload and retry"
+        rec["result"] = new
+        lines[li] = json.dumps(rec, ensure_ascii=False, default=str)
+        f.seek(0)
+        f.write("\n".join(lines))
+        f.truncate()
+    md = p.with_suffix(".md")
+    if md.exists():
+        records = [r for _, r in _parse_lines(lines)]
+        md.write_text(f"# Session {p.stem}\n\n" + runlog.render_transcript(records), encoding="utf-8")
+    return None
 
-    def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj, ensure_ascii=False, default=str), "application/json; charset=utf-8")
 
+class Handler(webui.JSONHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._send(200, PAGE, "text/html; charset=utf-8")
+            self._html(PAGE)
         elif parsed.path == "/api/sessions":
             self._json(_sessions_payload(LOG_DIR))
         elif parsed.path == "/api/session":
@@ -304,7 +306,23 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(payload)
         else:
-            self._send(404, "not found", "text/plain; charset=utf-8")
+            self._not_found()
+
+    def do_POST(self):
+        if urlparse(self.path).path != "/api/edit":
+            return self._not_found()
+        try:
+            body = self._body()
+            name, i, old, new = body["name"], int(body["i"]), body["old"], body["result"]
+            if not isinstance(new, str):
+                raise ValueError("result must be a string")
+        except (ValueError, KeyError, TypeError) as e:
+            return self._json({"error": f"bad request: {e}"}, code=400)
+        err = _edit_result(LOG_DIR, name, i, old, new)
+        if err:
+            self._json({"error": err}, code=409)
+        else:
+            self._json({"ok": True})
 
 
 def main() -> None:
@@ -317,13 +335,7 @@ def main() -> None:
 
     LOG_DIR = Path(args.dir)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"serving {LOG_DIR}/ at http://{args.host}:{args.port}  (Ctrl-C to stop)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
-        server.shutdown()
+    webui.serve(Handler, args.host, args.port, f"{LOG_DIR}/")
 
 
 if __name__ == "__main__":

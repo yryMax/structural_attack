@@ -1,0 +1,30 @@
+{
+  "call": "calendar.events.list(timeMin='2026-09-25T00:00:00+03:00', timeMax='2026-09-25T23:59:59+03:00')",
+  "body": [
+    {
+      "id": "0obvpt2o1t3o7515g9soqtdim2",
+      "status": "confirmed",
+      "summary": "1:1 with Alex",
+      "description": "对标题、说明或附件做出的更改不会保存。若要进行修改，请前往：https://tasks.google.com/task/-goiXKaC3KqH-5rW",
+      "location": "",
+      "start": "2026-09-25T09:00:00+03:00",
+      "end": "2026-09-25T09:30:00+03:00",
+      "organizer": "jianghurainxwy@gmail.com",
+      "attendees": [],
+      "htmlLink": "https://www.google.com/calendar/event?eid=MG9idnB0Mm8xdDNvNzUxNWc5c29xdGRpbTIgamlhbmdodXJhaW54d3lAbQ"
+    },
+    {
+      "id": "3jutb4tq1cjons5sp9cpagc57h",
+      "status": "confirmed",
+      "summary": "Dinner with Sam",
+      "description": "",
+      "location": "",
+      "start": "2026-09-25T18:00:00+03:00",
+      "end": "2026-09-25T20:00:00+03:00",
+      "organizer": "jianghurainxwy@gmail.com",
+      "attendees": [],
+      "htmlLink": "https://www.google.com/calendar/event?eid=M2p1dGI0dHExY2pvbnM1c3A5Y3BhZ2M1N2ggamlhbmdodXJhaW54d3lAbQ"
+    }
+  ],
+  "question": "what is the schedule for Sep 25 morning?"
+}
