@@ -15,7 +15,7 @@ from google.genai import types
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-import google_auth
+from . import google_auth
 
 TOOLS = {}                # name -> (fn, description, json schema)
 SIDE_EFFECT_TOOLS = set()  # tools that need user confirmation
@@ -257,7 +257,7 @@ def call_tool(name: str, args: dict) -> str:
     except HttpError as e:
         err = f"Google API {e.status_code}: {e.reason}"
     except RefreshError as e:
-        err = f"auth failed, run `python google_auth.py`: {e}"
+        err = f"auth failed, run `python -m harness.google_auth`: {e}"
     except Exception as e:
         err = repr(e)
     return json.dumps({"error": err}, ensure_ascii=False)

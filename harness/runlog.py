@@ -7,8 +7,8 @@ Two outputs per session, written side by side in the log dir:
 The same rendering is used for the live transcript and for re-rendering an old
 log from the CLI, so both always agree:
 
-    python runlog.py runs/<ts>.jsonl          # print transcript to stdout
-    python runlog.py runs/<ts>.jsonl --md      # also write runs/<ts>.md
+    python -m harness.runlog runs/<ts>.jsonl          # print transcript to stdout
+    python -m harness.runlog runs/<ts>.jsonl --md      # also write runs/<ts>.md
 """
 
 import argparse

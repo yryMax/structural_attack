@@ -1,7 +1,7 @@
 """Live web viewer for miniagent session logs.
 
-    python viewer.py                      # serve ./runs at http://localhost:8765
-    python viewer.py --dir runs --port 8765
+    python -m ui.viewer                      # serve ./runs at http://localhost:8765
+    python -m ui.viewer --dir runs --port 8765
 
 Open the URL, pick a session in the sidebar. The page auto-refreshes as the
 session's .jsonl is appended while miniagent runs. Each record shows a readable
@@ -18,8 +18,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-import runlog
-import webui
+from harness import runlog
+from . import webui
 
 LOG_DIR = Path("runs")  # overridden in main()
 

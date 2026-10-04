@@ -1,11 +1,11 @@
 """Gmail + Calendar agent: Gemini + Google API tools (tools.py), driven from a terminal REPL.
 
 Usage:
-  python miniagent.py
+  python -m harness.miniagent
 
 Requires GEMINI_API_KEY in .env and a one-time Google OAuth consent
 (Gmail + Calendar), which writes ~/.gmail-mcp/google-token.json:
-    python google_auth.py
+    python -m harness.google_auth
 """
 
 import argparse
@@ -18,9 +18,9 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-import tools
-from tools import SIDE_EFFECT_TOOLS
-from runlog import RunLog
+from . import tools
+from .tools import SIDE_EFFECT_TOOLS
+from .runlog import RunLog
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 

@@ -1,7 +1,7 @@
 """Web viewer for ToolCase cases: read each case the way the model gets it, and run it through Gemini.
 
-    python caseviewer.py                 # serve ./cases at http://localhost:8766
-    python caseviewer.py --dir cases --port 8766
+    python -m ui.caseviewer                 # serve ./cases at http://localhost:8766
+    python -m ui.caseviewer --dir cases --port 8766
 
 Each cases/*.json is read as an injector.ToolCase {call, body|benign, question}. Pick one in
 the sidebar to see it laid out as the conversation the model sees:
@@ -21,7 +21,7 @@ from urllib.parse import urlparse, parse_qs
 
 from injector import ToolCase
 import gemini
-import webui
+from . import webui
 
 CASE_DIR = Path("cases")  # overridden in main()
 

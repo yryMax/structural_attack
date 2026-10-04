@@ -1,7 +1,7 @@
 """Shared Google OAuth credentials
 
 One-time setup (opens a consent page; grants Gmail + Calendar):
-    python google_auth.py
+    python -m harness.google_auth
 
 This writes ~/.gmail-mcp/google-token.json, which every tool call then uses.
 """
@@ -27,7 +27,7 @@ def credentials() -> Credentials:
     global _creds
     if _creds is None:
         if not TOKEN_FILE.exists():
-            raise FileNotFoundError(f"{TOKEN_FILE} missing; run `python google_auth.py` first")
+            raise FileNotFoundError(f"{TOKEN_FILE} missing; run `python -m harness.google_auth` first")
         _creds = Credentials.from_authorized_user_file(str(TOKEN_FILE))
     return _creds
 
