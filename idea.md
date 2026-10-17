@@ -56,9 +56,6 @@ role layer{
 }...
 
 
-body layer: make sure they are 
-
-
 effectivenes
 
 1. payload calculation matters!（？！）
