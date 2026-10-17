@@ -1,7 +1,7 @@
 """Live web viewer for miniagent session logs.
 
-    python -m ui.viewer                      # serve ./runs at http://localhost:8765
-    python -m ui.viewer --dir runs --port 8765
+    python -m ui.viewer                      # serve ./runs/miniagent at http://localhost:8765
+    python -m ui.viewer --dir runs/miniagent --port 8765
 
 Open the URL, pick a session in the sidebar. The page auto-refreshes as the
 session's .jsonl is appended while miniagent runs. Each record shows a readable
@@ -27,7 +27,7 @@ from urllib.parse import urlparse, parse_qs
 from harness import runlog
 from . import webui
 
-LOG_DIR = Path("runs")  # overridden in main()
+LOG_DIR = Path("runs/miniagent")  # overridden in main()
 
 
 CSS = r"""
@@ -508,7 +508,7 @@ class Handler(webui.JSONHandler):
 def main() -> None:
     global LOG_DIR
     ap = argparse.ArgumentParser(description="Live web viewer for miniagent session logs.")
-    ap.add_argument("--dir", default="runs", help="log directory to watch (default: runs)")
+    ap.add_argument("--dir", default="runs/miniagent", help="log directory to watch (default: runs/miniagent)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()

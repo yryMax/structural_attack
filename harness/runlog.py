@@ -12,8 +12,8 @@ its part counts.
 The same rendering is used for the live transcript and for re-rendering an old
 log from the CLI, so both always agree:
 
-    python -m harness.runlog runs/<ts>.jsonl          # print transcript to stdout
-    python -m harness.runlog runs/<ts>.jsonl --md      # also write runs/<ts>.md
+    python -m harness.runlog runs/miniagent/<ts>.jsonl          # print transcript to stdout
+    python -m harness.runlog runs/miniagent/<ts>.jsonl --md      # also write runs/miniagent/<ts>.md
 """
 
 import argparse
@@ -207,7 +207,7 @@ def _read_jsonl(path: str) -> list:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Render a session .jsonl log as a readable transcript.")
-    ap.add_argument("jsonl", help="path to a runs/<ts>.jsonl file")
+    ap.add_argument("jsonl", help="path to a runs/miniagent/<ts>.jsonl file")
     ap.add_argument("--md", action="store_true", help="also write <same-stem>.md next to the source")
     args = ap.parse_args()
 

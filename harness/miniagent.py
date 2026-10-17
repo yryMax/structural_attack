@@ -139,7 +139,7 @@ async def repl(client: genai.Client, args: argparse.Namespace, log: RunLog) -> N
 async def run(args: argparse.Namespace) -> None:
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
-    log = RunLog(Path("runs"))
+    log = RunLog(Path("runs/miniagent"))
     last_request = LastRequest()
     client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
         async_client_args={"event_hooks": {"request": [last_request]}}))

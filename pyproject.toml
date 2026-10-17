@@ -8,13 +8,14 @@ package-mode = false
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
 openai = "^1.0"
-anthropic = "^0.40"
+anthropic = ">=0.47"
 google-genai = "^1.0"
 mcp = "^2.2.0"
 python-dotenv = "^1.2.3"
 google-api-python-client = "^2.200.0"
 google-auth = "^2.58.0"
 google-auth-oauthlib = "^1.4.1"
+agentdojo = {git = "https://github.com/ethz-spylab/agentdojo.git", rev = "089ed468cf3ed0322acc66b0211f26d9d90dbf60"}
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0"
