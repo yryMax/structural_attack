@@ -16,6 +16,8 @@ ui/             local web viewers
   webui.py        shared server / page code
 injector.py     ToolCase + build injected cases
 gemini.py       one-shot Gemini call for case testing
+ask_request.py  case json -> json with gemini
+make_ill.py     case to case injection
 cases/          *_template / *_target / *_ill.json
 notebooks/
 ```
@@ -45,5 +47,7 @@ and `ill` is the template with the payload injected into one string field.
 
 ```bash
 python injector.py              # template + target -> cases/email_ill.json (edit __main__ to change)
-python -m ui.caseviewer         # http://localhost:8766, pick a case, click "Ask Gemini"
+python -m ui.caseviewer         # http://localhost:8766
 ```
+
+

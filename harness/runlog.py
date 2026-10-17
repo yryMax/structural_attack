@@ -4,6 +4,11 @@ Two outputs per session, written side by side in the log dir:
   - <ts>.jsonl : append-only structured record (source of truth for analysis)
   - <ts>.md    : human-readable transcript, written live as the session runs
 
+Record types: user, model, tool_call, tool_result, and request: the exact JSON body of the
+session's last generate_content call as sent over the wire, written once at the end (each
+call resends the whole conversation, so the last one holds everything). The .md shows only
+its part counts.
+
 The same rendering is used for the live transcript and for re-rendering an old
 log from the CLI, so both always agree:
 
@@ -13,6 +18,7 @@ log from the CLI, so both always agree:
 
 import argparse
 import json
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +66,28 @@ def truncate_block(text: str, max_lines: int = 8, max_chars: int = 500) -> str:
     return "\n".join("    " + ln for ln in clipped.split("\n"))
 
 
+PART_META = {"thought", "thoughtSignature", "videoMetadata", "partMetadata"}
+
+
+def part_kind(part: dict) -> str:
+    """A wire-format part's kind: 'text', 'functionCall', 'functionResponse', ... ('thought'
+    for a thought-summary text part)."""
+    if part.get("thought"):
+        return "thought"
+    return next((k for k in part if k not in PART_META), "?")
+
+
+def request_summary(body: str):
+    """Content and part counts for a logged request body, or None if it isn't JSON."""
+    try:
+        req = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    contents = req.get("contents") or []
+    kinds = Counter(part_kind(p) for c in contents for p in c.get("parts") or [])
+    return {"contents": len(contents), "parts": sum(kinds.values()), "kinds": dict(kinds)}
+
+
 def _render_body(rec: dict):
     """Render one record's body (no turn header). Returns None to skip it."""
     t = rec.get("type")
@@ -90,6 +118,14 @@ def _render_body(rec: dict):
         stripped = result.lstrip()
         marker = "❌ " if stripped.startswith("ERROR") or stripped.startswith('{"error"') else ""
         return f"{marker}**result:** {name}\n{truncate_block(result)}"
+
+    if t == "request":
+        head = f"*→ final request · {len(rec.get('body') or '') / 1024:.1f} KB"
+        s = request_summary(rec.get("body"))
+        if s is None:
+            return head + " · body is not JSON*"
+        kinds = ", ".join(f"{k} {v}" for k, v in s["kinds"].items())
+        return head + f" · {s['contents']} contents · {s['parts']} parts ({kinds})*"
 
     # tool_call is redundant with the model's '→ tool' line; skip it.
     return None

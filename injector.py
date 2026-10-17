@@ -5,6 +5,34 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+class DupDict(dict):
+    """A JSON object that keeps repeated keys. Lookups see the last value (as json.loads does);
+    items() — and so json.dumps — gives back every key/value pair in file order."""
+
+    def __init__(self, pairs=()):
+        super().__init__(pairs)
+        self.pairs = [[k, v] for k, v in pairs]
+
+    def items(self):
+        return [(k, v) for k, v in self.pairs]
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        for p in reversed(self.pairs):   # the occurrence lookups see
+            if p[0] == key:
+                p[1] = value
+                return
+        self.pairs.append([key, value])
+
+    def __deepcopy__(self, memo):
+        return DupDict([(k, copy.deepcopy(v, memo)) for k, v in self.pairs])
+
+
+def loads(s: str):
+    """json.loads that keeps duplicate keys (see DupDict)."""
+    return json.loads(s, object_pairs_hook=DupDict)
+
+
 def _dumps(obj) -> str:
     # default separators (", " / ": "), single line — the payload style inside the ill field
     return json.dumps(obj, ensure_ascii=False)
@@ -65,19 +93,19 @@ def resume_from_ill(ill_case: ToolCase, point: list) -> ToolCase:
 
     prefix, suffix = _edges(ill_case.body, index, field)
     try:
-        target_body = json.loads(prefix + payload + suffix)
+        target_body = loads(prefix + payload + suffix)
     except json.JSONDecodeError as e:
         raise ValueError(f"payload at point {point} does not rebuild valid JSON: {e}") from e
     return ToolCase(ill_case.call, target_body, ill_case.question)
 
 if __name__ == "__main__":
-    template = json.loads(Path("cases/email_template.json").read_text(encoding="utf-8"))
+    template = loads(Path("cases/email_template.json").read_text(encoding="utf-8"))
     template_case = ToolCase(template["call"], template["body"], template["question"])
 
-    #ill = json.loads(Path("cases/email_ill.json").read_text(encoding="utf-8"))
+    #ill = loads(Path("cases/email_ill.json").read_text(encoding="utf-8"))
     #ill_case = ToolCase(ill["call"], ill["body"], ill["question"])
 
-    target = json.loads(Path("cases/email_target.json").read_text(encoding="utf-8"))
+    target = loads(Path("cases/email_target.json").read_text(encoding="utf-8"))
     target_case = ToolCase(target["call"], target["body"], target["question"])
 
     ill_case = inject_from_target(template_case, target_case, point=[0, "body"])

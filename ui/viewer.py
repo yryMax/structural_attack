@@ -10,6 +10,12 @@ raw JSON string exactly as it appears in the .jsonl, copied, and edited in
 either form. Saving an edit rewrites that record's "result" in the .jsonl (in
 place, so a running miniagent keeps appending) and regenerates the .md.
 
+Two modes (toolbar):
+  Log      : the session as a transcript, one card per record
+  Requests : the session's final request body as sent to the API (it holds the whole
+             conversation), broken into its contents and parts
+Every card flips between a readable view and its JSON.
+
 Stdlib only, no dependencies.
 """
 
@@ -28,6 +34,16 @@ CSS = r"""
 .turn { margin: 22px 0 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; }
 .turn:first-child { border-top: none; margin-top: 4px; }
+.views { position: absolute; top: 7px; right: 8px; display: flex; gap: 2px; }
+.views button { border: 1px solid var(--border); background: var(--bg); color: var(--muted); cursor: pointer;
+  font-family: inherit; font-size: 11px; padding: 1px 7px; border-radius: 5px; }
+.views button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rec > .role:first-child { padding-right: 130px; }
+.rec.req { background: var(--panel); border-style: dashed; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; font-size: 13px; }
+.kv .k { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; padding-top: 1px; }
+.kv .v { white-space: pre-wrap; word-break: break-word; min-width: 0; max-height: 16em; overflow-y: auto; }
+.pl { font-size: 12px; font-weight: 700; color: var(--muted); margin: 8px 0 0; }
 .resultbox { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
 .resultbox pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 24em; overflow-y: auto; }
 .resultbox textarea { display: block; width: 100%; margin: 4px 0 0; padding: 10px; border-radius: 6px;
@@ -44,6 +60,8 @@ BODY = r"""
   <main>
     <div class="toolbar">
       <span class="title" id="title">Pick a session →</span>
+      <button class="tb on" id="mLog">Log</button>
+      <button class="tb" id="mReq">Requests</button>
       <span class="live"><span class="dot" id="liveDot"></span><span id="liveText">live</span></span>
     </div>
     <div id="view" class="content"><div class="empty">No session selected.</div></div>
@@ -54,6 +72,11 @@ BODY = r"""
 JS = r"""
 let current = null;       // session file name
 let lastMtime = null;
+let lastData = null;      // last loaded session payload
+let mode = "log";         // log | requests
+let jsonShown = new Set();  // cards flipped to JSON: "r<i>" record i, "q<i>" request i, "p<i>.<c>.<p>" a part of it
+let asSent = true;        // request JSON: the exact text sent, or pretty-printed
+let parsed = new Map();   // record index -> parsed request body (null if not JSON)
 let rawShown = new Set(); // record indices whose result is shown as raw JSON string
 let drafts = new Map();   // record index -> {raw: bool, text} for results being edited
 
@@ -67,7 +90,10 @@ async function loadSessions() {
 
 function selectSession(name) {
   if (current !== name && drafts.size && !confirm("Discard unsaved edits?")) return;
-  if (current !== name) { current = name; lastMtime = null; rawShown = new Set(); drafts = new Map(); }
+  if (current !== name) {
+    current = name; lastMtime = null; lastData = null; rawShown = new Set(); drafts = new Map();
+    jsonShown = new Set(); parsed = new Map();
+  }
   loadSessions();
   refresh(true);
 }
@@ -85,9 +111,21 @@ async function refresh(force) {
   loadSessions();
 }
 
+function rerender() { if (lastData) render(lastData); }
+
 function render(data) {
+  lastData = data;
+  document.getElementById("mLog").className = "tb" + (mode === "log" ? " on" : "");
+  document.getElementById("mReq").className = "tb" + (mode === "requests" ? " on" : "");
   const view = document.getElementById("view");
   view.innerHTML = "";
+  if (mode === "requests") renderRequests(view, data);
+  else renderLog(view, data);
+}
+
+const CARD_CLASS = { user: "user", tool_result: "result", request: "req" };
+
+function renderLog(view, data) {
   let lastTurn = null;
   data.records.forEach((rec, i) => {
     if (rec.type === "tool_call") return;                 // redundant with model → tool
@@ -96,9 +134,37 @@ function render(data) {
       view.appendChild(el("div", "turn", "Turn " + rec.turn + " · " + ts));
       lastTurn = rec.turn;
     }
-    const card = renderRecord(rec, i);
-    if (card) view.appendChild(card);
+    const key = "r" + i;
+    const card = jsonShown.has(key)
+      ? jsonCard(CARD_CLASS[rec.type] || "", rec.type + " · log record", JSON.stringify(rec, null, 2))
+      : renderRecord(rec, i);
+    if (!card) return;
+    card.appendChild(viewToggle(key));
+    view.appendChild(card);
   });
+}
+
+// the Readable / JSON switch in a card's corner
+function viewToggle(key) {
+  const box = el("div", "views");
+  for (const [label, json] of [["Readable", false], ["JSON", true]]) {
+    const b = el("button", jsonShown.has(key) === json ? "on" : null, label);
+    b.onclick = () => { if (json) jsonShown.add(key); else jsonShown.delete(key); rerender(); };
+    box.appendChild(b);
+  }
+  return box;
+}
+
+function jsonCard(cls, label, text, extraButtons) {
+  const c = el("div", "rec " + cls);
+  c.appendChild(el("div", "role", label));
+  c.appendChild(el("pre", "raw", text));
+  const bar = el("div", "rawbar");
+  if (extraButtons) extraButtons(bar);
+  bar.appendChild(copyButton(() => text));
+  bar.appendChild(el("span", null, text.length + " chars"));
+  c.appendChild(bar);
+  return c;
 }
 
 function renderRecord(rec, i) {
@@ -214,8 +280,122 @@ function renderRecord(rec, i) {
     c.appendChild(box);
     return c;
   }
+  if (t === "request") {
+    const q = parseRequest(rec, i);
+    const c = el("div", "rec req");
+    c.appendChild(el("div", "role", "→ final request · sent to the model"));
+    if (!q) { c.appendChild(el("div", "body", "body is not JSON · " + kb(rec))); return c; }
+    const s = partStats(q);
+    c.appendChild(el("div", "body", s.contents + " contents · " + s.parts + " parts (" + s.kinds + ") · " + kb(rec)));
+    const bar = el("div", "rawbar");
+    const open = el("button", null, "Open in Requests");
+    open.onclick = () => { mode = "requests"; rerender(); };
+    bar.appendChild(open);
+    c.appendChild(bar);
+    return c;
+  }
   return null;
 }
+
+// --- requests: the bodies sent to the API, in wire format ------------------------------
+
+const PART_META = new Set(["thought", "thoughtSignature", "videoMetadata", "partMetadata"]);
+const partKind = p => p.thought ? "thought" : (Object.keys(p).find(k => !PART_META.has(k)) || "?");
+const kb = rec => ((rec.body || "").length / 1024).toFixed(1) + " KB";
+// record i's request body, parsed (null if it isn't JSON)
+function parseRequest(rec, i) {
+  if (!parsed.has(i)) { let q = null; try { q = JSON.parse(rec.body); } catch (e) {} parsed.set(i, q); }
+  return parsed.get(i);
+}
+
+function partStats(q) {
+  const kinds = {};
+  let parts = 0;
+  for (const c of q.contents || []) for (const p of c.parts || []) { const k = partKind(p); kinds[k] = (kinds[k] || 0) + 1; parts++; }
+  return { contents: (q.contents || []).length, parts, kinds: Object.entries(kinds).map(([k, n]) => k + " " + n).join(", ") };
+}
+
+function renderRequests(view, data) {
+  const i = data.records.map(r => r.type).lastIndexOf("request");
+  if (i < 0) {
+    view.appendChild(el("div", "empty", "No request in this session yet: miniagent writes the final request when the session ends."));
+    return;
+  }
+  const rec = data.records[i], q = parseRequest(rec, i);
+  view.appendChild(requestCard(rec, i, q));
+  if (!q) return;
+  (q.contents || []).forEach((ct, ci) => {
+    view.appendChild(el("div", "turn", "contents[" + ci + "] · " + ct.role + " · " + (ct.parts || []).length + " parts"));
+    (ct.parts || []).forEach((p, pi) => view.appendChild(partCard(p, i, ci, pi, ct.role)));
+  });
+}
+
+function requestCard(rec, i, q) {
+  const key = "q" + i;
+  const label = "final request · turn " + rec.turn;
+  if (!q || jsonShown.has(key)) {
+    const text = asSent || !q ? rec.body : JSON.stringify(q, null, 2);
+    const c = jsonCard("req", label, text, bar => {
+      for (const [lbl, v] of [["As sent", true], ["Pretty", false]]) {
+        const b = el("button", asSent === v ? "on" : null, lbl);
+        b.onclick = () => { asSent = v; rerender(); };
+        bar.appendChild(b);
+      }
+    });
+    if (q) c.appendChild(viewToggle(key));
+    return c;
+  }
+  const c = el("div", "rec req");
+  c.appendChild(el("div", "role", label));
+  const kv = el("div", "kv");
+  const row = (k, v) => { kv.appendChild(el("div", "k", k)); kv.appendChild(el("div", "v", v)); };
+  const s = partStats(q);
+  row("size", kb(rec) + " (" + (rec.body || "").length + " chars)");
+  row("contents", s.contents + " contents · " + s.parts + " parts (" + s.kinds + ")");
+  const sys = q.systemInstruction;
+  if (sys) row("systemInstruction", (sys.role ? "role " + sys.role + " · " : "") + (sys.parts || []).map(p => p.text != null ? p.text : JSON.stringify(p)).join("\n"));
+  if (q.tools) {
+    const fns = q.tools.flatMap(t => (t.functionDeclarations || []).map(f => f.name));
+    row("tools", fns.length + " functions: " + fns.join(", "));
+  }
+  for (const [k, v] of Object.entries(q)) if (!["contents", "systemInstruction", "tools"].includes(k)) row(k, JSON.stringify(v));
+  c.appendChild(kv);
+  c.appendChild(viewToggle(key));
+  return c;
+}
+
+function partCard(p, i, ci, pi, role) {
+  const key = "p" + i + "." + ci + "." + pi, kind = partKind(p);
+  const cls = kind === "functionResponse" ? "result" : kind === "functionCall" ? "tool" : role === "user" ? "user" : "";
+  const label = "parts[" + pi + "] · " + kind + (p.thoughtSignature ? " · thoughtSignature " + p.thoughtSignature.length + " chars" : "");
+  let c;
+  if (jsonShown.has(key)) c = jsonCard(cls, label, JSON.stringify(p, null, 2));
+  else {
+    c = el("div", "rec " + cls);
+    c.appendChild(el("div", "role", label));
+    if (kind === "text" || kind === "thought") c.appendChild(el("div", "body", p.text));
+    else if (kind === "functionCall") {
+      const line = el("div", "call");
+      line.appendChild(el("span", "fn", p.functionCall.name));
+      line.appendChild(document.createTextNode("(" + compactArgs(p.functionCall.args || {}) + ")"));
+      c.appendChild(line);
+    } else if (kind === "functionResponse") {
+      c.appendChild(el("div", "call", "name: " + p.functionResponse.name));
+      for (const [k, v] of Object.entries(p.functionResponse.response || {})) {
+        const text = typeof v === "string" ? v : JSON.stringify(v, null, 2);
+        c.appendChild(el("div", "pl", "response." + k + " · " + text.length + " chars"));
+        c.appendChild(el("pre", "raw", text));
+      }
+    } else if (kind === "inlineData") {
+      c.appendChild(el("div", "body", (p.inlineData.mimeType || "") + " · " + (p.inlineData.data || "").length + " chars of base64"));
+    } else c.appendChild(el("pre", "raw", JSON.stringify(p, null, 2)));
+  }
+  c.appendChild(viewToggle(key));
+  return c;
+}
+
+document.getElementById("mLog").onclick = () => { mode = "log"; rerender(); };
+document.getElementById("mReq").onclick = () => { mode = "requests"; rerender(); };
 
 loadSessions();
 setInterval(() => { if (current) refresh(false); else loadSessions(); }, 1500);

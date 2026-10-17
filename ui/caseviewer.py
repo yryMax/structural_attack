@@ -18,8 +18,7 @@ import json
 import time
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
-
-from injector import ToolCase
+from injector import ToolCase, DupDict, loads
 import gemini
 from . import webui
 
@@ -114,7 +113,7 @@ function valueNode(v) {
 
 // --- tool result views ----------------------------------------------------------------
 
-function renderCards(body) {
+function renderCards(body, pairs) {
   const wrap = el("div", "records");
   body.forEach((rec, i) => {
     const card = el("div", "record");
@@ -128,7 +127,7 @@ function renderCards(body) {
 
     const kv = el("div", "kv"), empties = [];
     const skip = new Set([titleKey, range ? "start" : null, range ? "end" : null]);
-    for (const [k, v] of Object.entries(rec)) {
+    for (const [k, v] of (pairs && pairs[i]) || Object.entries(rec)) {   // pairs keep repeated keys
       if (isEmpty(v)) { empties.push(k); continue; }
       if (skip.has(k)) continue;
       kv.appendChild(el("div", "k", k));
@@ -153,8 +152,8 @@ function renderResult(d) {
   c.appendChild(el("div", "role", "tool → agent · " + n));
 
   const m = cardable ? mode : (mode === "cards" ? "json" : mode);
-  const json = JSON.stringify(d.body, null, 2);
-  if (m === "cards") c.appendChild(renderCards(d.body));
+  const json = d.body_json;
+  if (m === "cards") c.appendChild(renderCards(d.body, d.pairs));
   else if (m === "json") c.appendChild(el("pre", "raw", json));
   else {
     c.appendChild(el("div", "pl", "System instruction"));
@@ -354,7 +353,7 @@ PAGE = webui.page("ToolCase viewer", CSS, BODY, JS)
 
 
 def _load_case(path: Path) -> ToolCase:
-    d = json.loads(path.read_text(encoding="utf-8"))
+    d = loads(path.read_text(encoding="utf-8"))   # keeps duplicate keys
     body = d["body"] if "body" in d else d["benign"]   # accept either key
     return ToolCase(d["call"], body, d["question"])
 
@@ -374,7 +373,11 @@ def _cases_payload():
 
 def _case_payload(p: Path):
     case = _load_case(p)
+    # the browser's JSON.parse would merge repeated keys, so also send the exact JSON text and
+    # each record's full key/value list
+    pairs = [r.items() if isinstance(r, DupDict) else None for r in case.body] if isinstance(case.body, list) else None
     return {"name": p.name, "call": case.call, "question": case.question, "body": case.body,
+            "body_json": json.dumps(case.body, ensure_ascii=False, indent=2), "pairs": pairs,
             "prompt": case.build_prompt(), "system": gemini.SYSTEM, "model": gemini.MODEL,
             "mtime": p.stat().st_mtime}
 
