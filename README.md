@@ -18,6 +18,7 @@ injector.py     ToolCase + build injected cases
 gemini.py       one-shot Gemini call for case testing
 ask_request.py  case json -> json with gemini
 make_ill.py     case to case injection
+run_agentdojo.py agentdojo wrapper with parallel execution
 cases/          *_template / *_target / *_ill.json
 notebooks/
 ```
@@ -52,8 +53,7 @@ python -m ui.caseviewer         # http://localhost:8766
 
 
 # Experimental Setup
-
-AgentDojo benchmark `v1.2.2` (default). The paper (v1) has 6 workspace injection tasks; v1.2 raised it to 14.
+Tested on agentdojo benchmark(full) for detail see below.
 
 | Environment | Tools | User tasks | Injection tasks | Cross cases (User × Injection) |
 |---|---|---|---|---|
@@ -65,7 +65,7 @@ AgentDojo benchmark `v1.2.2` (default). The paper (v1) has 6 workspace injection
 
 Runs per setting: benign = 97; with attack = 949 cross cases + 35 injection tasks run alone (injection-task utility check) = 984.
 
-tested for qwen3
+test sample command for qwen3
 ```
 benign
 python run_agentdojo.py \
@@ -75,9 +75,16 @@ python run_agentdojo.py \
   --attack important_instructions / ours / others
 ```
 
+**metrics:**
 utility: if the benign task completed
 security: if the malicious task are completed
 
 
 
 # Eval result
+
+
+| Overall | Benign | Important Instr | ChatInject | MyAttack |
+|---|---|---|---|---|
+| ASR ↑ | – | 56.3 (534/949) | 35.2 (334/949) | |
+| Utility ↓ | 79.4 (77/97) | 33.8 (321/949) | 43.4 (412/949) | |
