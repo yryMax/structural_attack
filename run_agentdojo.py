@@ -1,9 +1,11 @@
 """Run the AgentDojo v1.2.2 benchmark with one subprocess per case, N at a time.
 
 agentdojo's own --max-workers only parallelizes across suites (and is broken in 0.1.35),
-so a full attack run is ~950 sequential cases. This launches
-`python -m agentdojo.scripts.benchmark` once per (suite, user_task[, injection_task]),
-skipping cases whose result JSON already exists, so it is safe to stop and re-run.
+so a full attack run is ~950 sequential cases. This runs agentdojo's benchmark CLI once per
+(suite, user_task[, injection_task]) in a forked child process, skipping cases whose result JSON
+already exists, so it is safe to stop and re-run. agentdojo is imported once in the parent and
+inherited by every fork: a fresh `python -m agentdojo.scripts.benchmark` spends over a minute
+importing ~24k files from Lustre, per case.
 
     python run_agentdojo.py --model-id qwen/qwen3-235b-a22b-2507 \
         --logdir runs/qwen3-235b-a22b-2507 -j 16                        # benign
@@ -21,14 +23,19 @@ Summarize results with `python -m metrics.summarize <logdir>`.
 """
 
 import argparse
+import importlib
 import json
+import logging
+import multiprocessing as mp
+import os
 import re
-import subprocess
 import sys
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from multiprocessing.connection import wait
 from pathlib import Path
 
+from agentdojo.scripts import benchmark
 from agentdojo.task_suite.load_suites import get_suites
+from rich.logging import RichHandler
 
 PIPELINE_NAME = "openai-compatible"  # fixed pipeline name for --model OPENAI_COMPATIBLE
 BENCHMARK_VERSION = "v1.2.2"
@@ -77,10 +84,11 @@ def case_name(case: tuple[str, str, str | None]) -> str:
     return "/".join(c for c in case if c)
 
 
-def run_case(args: argparse.Namespace, case: tuple[str, str, str | None]) -> tuple[tuple, int]:
+def run_case(args: argparse.Namespace, case: tuple[str, str, str | None]) -> None:
+    """Body of a forked child: send stdout/stderr to the case log and run the benchmark CLI,
+    which exits with its status code."""
     suite_name, user_task_id, injection_task_id = case
-    cmd = [
-        sys.executable, "-m", "agentdojo.scripts.benchmark",
+    cli_args = [
         "--model", "OPENAI_COMPATIBLE",
         "--model-id", args.model_id,
         "--logdir", str(args.logdir),
@@ -89,12 +97,16 @@ def run_case(args: argparse.Namespace, case: tuple[str, str, str | None]) -> tup
         "-ut", user_task_id,
     ]
     for module in args.modules_to_load:
-        cmd += ["-ml", module]
+        cli_args += ["-ml", module]
     if args.attack is not None:
-        cmd += ["--attack", args.attack, "-it", injection_task_id]
-    with log_path(args, case).open("w") as f:
-        returncode = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, check=False).returncode
-    return case, returncode
+        cli_args += ["--attack", args.attack, "-it", injection_task_id]
+    log_fd = os.open(log_path(args, case), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    # same logging setup as `python -m agentdojo.scripts.benchmark`
+    logging.basicConfig(format="%(message)s", level=logging.INFO, datefmt="%H:%M:%S",
+                        handlers=[RichHandler(show_path=False, markup=True)], force=True)
+    benchmark.main(cli_args)
 
 
 def main() -> None:
@@ -113,24 +125,33 @@ def main() -> None:
     todo = [c for c in cases if not is_done(result_path(args.logdir, c, args.attack))]
     print(f"{len(cases)} cases, {len(cases) - len(todo)} already done, {len(todo)} to run with {args.jobs} jobs")
 
+    for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
+        importlib.import_module(module)
+
+    fork = mp.get_context("fork")
+    queue = [(c, 1) for c in todo]
+    running = {}  # process sentinel -> (process, case, attempt)
     failed = []
     finished = 0
-    with ThreadPoolExecutor(args.jobs) as pool:
-        pending = {pool.submit(run_case, args, c): (c, 1) for c in todo}
-        while pending:
-            done, _ = wait(pending, return_when=FIRST_COMPLETED)
-            for future in done:
-                case, attempt = pending.pop(future)
-                _, returncode = future.result()
-                if returncode == 0:
-                    finished += 1
-                    print(f"[{finished}/{len(todo)}] {case_name(case)} ok", flush=True)
-                elif attempt <= 3:
-                    pending[pool.submit(run_case, args, case)] = (case, attempt + 1)
-                else:
-                    finished += 1
-                    failed.append((case, last_error(log_path(args, case))))
-                    print(f"[{finished}/{len(todo)}] {case_name(case)} FAILED after {attempt} attempts", flush=True)
+    while queue or running:
+        while queue and len(running) < args.jobs:
+            case, attempt = queue.pop(0)
+            sys.stdout.flush()  # don't let the child inherit unflushed parent output
+            proc = fork.Process(target=run_case, args=(args, case))
+            proc.start()
+            running[proc.sentinel] = (proc, case, attempt)
+        for sentinel in wait(list(running)):
+            proc, case, attempt = running.pop(sentinel)
+            proc.join()
+            if proc.exitcode == 0:
+                finished += 1
+                print(f"[{finished}/{len(todo)}] {case_name(case)} ok", flush=True)
+            elif attempt <= 3:
+                queue.append((case, attempt + 1))
+            else:
+                finished += 1
+                failed.append((case, last_error(log_path(args, case))))
+                print(f"[{finished}/{len(todo)}] {case_name(case)} FAILED after {attempt} attempts", flush=True)
 
     failed_file = args.logdir / "_failed.txt"
     failed_file.write_text("".join(f"{case_name(case)}\t{error}\n" for case, error in failed))

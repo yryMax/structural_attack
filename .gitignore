@@ -8,7 +8,7 @@ build/
 dist/
 
 # Virtual environments
-.venv/
+.venv
 venv/
 env/
 
@@ -36,3 +36,6 @@ Thumbs.db
 
 # trail file
 trial.ipynb
+
+# vLLM server
+vllm/
