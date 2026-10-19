@@ -69,28 +69,16 @@ test sample command for qwen3
 ```
 benign
 python run_agentdojo.py \
-  --model OPENAI_COMPATIBLE \
-  --model-id qwen/qwen3-235b-a22b-2507 \
-  --logdir runs/qwen3-235b-a22b-2507
+  --model-id qwen/qwen3-235b-a22b-2507 \ #must compatible with vllm registered name
+  --logdir runs/qwen3-235b-a22b-2507 # output log
   --attack important_instructions / ours / others
+  -ml my_attacks / others
 ```
 
-`my_attack` reads benign logs from `runs/<model-name>/openai-compatible/<suite>/<user_task>/none/none.json`
-and converts messages to API format in memory, solely to select the benign turns to replay.
-Closing and reopening tool responses use independent local ground-truth simulations cached in
-`mocked_tool_response/v1.2.2/<suite>/<user_task>.json`. All matching tool calls are
-cached; the first response per injection vector supplies its boundaries. If the benign run never
-reads a vector, its final assistant reply is replayed with the same mocked boundaries.
-
-```bash
-.venv/bin/python run_agentdojo.py \
-  --model-id qwen/qwen3-235b-a22b-2507 \
-  --logdir runs/qwen3-235b-a22b-2507_myattack_with_bait \
-  -ml my_attacks --attack my_attack
-```
-
-Set `MY_ATTACK_BENIGN_DIR` to override the directory containing the suite folders
-(for example, `runs/qwen3-235b-a22b-2507/openai-compatible`).
+luanch vllm hosts:
+sbatch vllm/serve_qwen_multinode.sh                                    # Qwen3-235B
+sbatch -J vllm-glm45 --export=ALL,MODEL_PATH=/scratch/project_462001732/reyang/models/GLM-4.5 \
+    vllm/serve_qwen_multinode.sh           
 
 **metrics:**
 utility: if the benign task completed

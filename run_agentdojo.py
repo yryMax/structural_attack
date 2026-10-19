@@ -33,6 +33,7 @@ import sys
 from multiprocessing.connection import wait
 from pathlib import Path
 
+from agentdojo.attacks.attack_registry import ATTACKS
 from agentdojo.scripts import benchmark
 from agentdojo.task_suite.load_suites import get_suites
 from rich.logging import RichHandler
@@ -58,6 +59,20 @@ def list_cases(suites: list[str], attack: str | None) -> list[tuple[str, str, st
 def result_path(logdir: Path, case: tuple[str, str, str | None], attack: str | None) -> Path:
     suite_name, user_task_id, injection_task_id = case
     return logdir / PIPELINE_NAME / suite_name / user_task_id / (attack or "none") / f"{injection_task_id or 'none'}.json"
+
+
+def load_endpoint(model_id: str) -> None:
+    """Point agentdojo at the vLLM server for `model_id` if one is up: vllm/serve_*.sh write its URL
+    and key to vllm/endpoint-<served name>.env. They override the environment and .env, which may
+    still hold a previous job's node and key."""
+    path = Path(__file__).parent / "vllm" / f"endpoint-{model_id}.env"
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        if line.startswith("export "):
+            key, _, value = line.removeprefix("export ").partition("=")
+            os.environ[key] = value
+    print(f"endpoint {os.environ['OPENAI_COMPATIBLE_BASE_URL']} from {path}")
 
 
 def is_done(path: Path) -> bool:
@@ -119,14 +134,17 @@ def main() -> None:
     ap.add_argument("-s", "--suite", dest="suites", action="append", default=[])
     ap.add_argument("-j", "--jobs", type=int, default=16)
     args = ap.parse_args()
+    load_endpoint(args.model_id)
+
+    for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
+        importlib.import_module(module)
+    if args.attack is not None and args.attack not in ATTACKS:
+        sys.exit(f"unknown attack {args.attack!r} (missing -ml?); registered: {', '.join(sorted(ATTACKS))}")
 
     (args.logdir / "_logs").mkdir(parents=True, exist_ok=True)
     cases = list_cases(args.suites, args.attack)
     todo = [c for c in cases if not is_done(result_path(args.logdir, c, args.attack))]
     print(f"{len(cases)} cases, {len(cases) - len(todo)} already done, {len(todo)} to run with {args.jobs} jobs")
-
-    for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
-        importlib.import_module(module)
 
     fork = mp.get_context("fork")
     queue = [(c, 1) for c in todo]
