@@ -106,7 +106,6 @@ def main() -> None:
                     help="module registering custom attacks, e.g. chatinject_attacks")
     ap.add_argument("-s", "--suite", dest="suites", action="append", default=[])
     ap.add_argument("-j", "--jobs", type=int, default=16)
-    ap.add_argument("--retries", type=int, default=2, help="re-runs of a failed case before giving up")
     args = ap.parse_args()
 
     (args.logdir / "_logs").mkdir(parents=True, exist_ok=True)
@@ -126,9 +125,7 @@ def main() -> None:
                 if returncode == 0:
                     finished += 1
                     print(f"[{finished}/{len(todo)}] {case_name(case)} ok", flush=True)
-                elif attempt <= args.retries:
-                    print(f"{case_name(case)} failed (attempt {attempt}): {last_error(log_path(args, case))}; retrying",
-                          flush=True)
+                elif attempt <= 3:
                     pending[pool.submit(run_case, args, case)] = (case, attempt + 1)
                 else:
                     finished += 1
