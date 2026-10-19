@@ -1,4 +1,4 @@
-"""Run the AgentDojo benchmark with one subprocess per case, N at a time.
+"""Run the AgentDojo v1.2.2 benchmark with one subprocess per case, N at a time.
 
 agentdojo's own --max-workers only parallelizes across suites (and is broken in 0.1.35),
 so a full attack run is ~950 sequential cases. This launches
@@ -31,11 +31,12 @@ from pathlib import Path
 from agentdojo.task_suite.load_suites import get_suites
 
 PIPELINE_NAME = "openai-compatible"  # fixed pipeline name for --model OPENAI_COMPATIBLE
+BENCHMARK_VERSION = "v1.2.2"
 
 
-def list_cases(version: str, suites: list[str], attack: str | None) -> list[tuple[str, str, str | None]]:
+def list_cases(suites: list[str], attack: str | None) -> list[tuple[str, str, str | None]]:
     cases = []
-    for suite_name, suite in get_suites(version).items():
+    for suite_name, suite in get_suites(BENCHMARK_VERSION).items():
         if suites and suite_name not in suites:
             continue
         for user_task_id in suite.user_tasks:
@@ -83,7 +84,7 @@ def run_case(args: argparse.Namespace, case: tuple[str, str, str | None]) -> tup
         "--model", "OPENAI_COMPATIBLE",
         "--model-id", args.model_id,
         "--logdir", str(args.logdir),
-        "--benchmark-version", args.benchmark_version,
+        "--benchmark-version", BENCHMARK_VERSION,
         "-s", suite_name,
         "-ut", user_task_id,
     ]
@@ -105,12 +106,11 @@ def main() -> None:
                     help="module registering custom attacks, e.g. chatinject_attacks")
     ap.add_argument("-s", "--suite", dest="suites", action="append", default=[])
     ap.add_argument("-j", "--jobs", type=int, default=16)
-    ap.add_argument("--benchmark-version", default="v1.2.2")
     ap.add_argument("--retries", type=int, default=2, help="re-runs of a failed case before giving up")
     args = ap.parse_args()
 
     (args.logdir / "_logs").mkdir(parents=True, exist_ok=True)
-    cases = list_cases(args.benchmark_version, args.suites, args.attack)
+    cases = list_cases(args.suites, args.attack)
     todo = [c for c in cases if not is_done(result_path(args.logdir, c, args.attack))]
     print(f"{len(cases)} cases, {len(cases) - len(todo)} already done, {len(todo)} to run with {args.jobs} jobs")
 

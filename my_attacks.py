@@ -1,13 +1,18 @@
 """Close a tool response, replay benign turns, forge a user turn, then reopen it.
 
-Run with ``--attack my_attack``. Benign API-format messages come from
-``<logdir>/<pipeline>/messages_benign/messages_<suite>_<user_task>_none_none.json``;
-``MY_ATTACK_BENIGN_DIR`` overrides that directory. If no candidate is read, use
-the last tool response and the complete final assistant reply as a fallback.
+Run with ``-ml my_attacks --attack my_attack``. Benign logs come from
+``runs/<model-name>/openai-compatible/<suite>/<user_task>/none/none.json``;
+``MY_ATTACK_BENIGN_DIR`` overrides the ``openai-compatible`` directory.
+Only the replayed turns depend on benign logs, converted to API format in memory.
+Tool boundaries come from local ground-truth calls, cached independently under
+``mocked_tool_response/v1.2.2/<suite>/<user_task>.json``. Every
+matching call is cached; the first response per vector supplies its boundaries.
+If the benign trace never reads a vector, replay its final assistant reply.
 All replayed turns are injected text, not actual conversation messages.
 """
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -19,18 +24,54 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+from agentdojo.agent_pipeline.llms.openai_llm import (
+    _content_blocks_to_openai_content_blocks,
+    _tool_call_to_openai,
+)
 from agentdojo.agent_pipeline.tool_execution import tool_result_to_str
 from agentdojo.attacks.attack_registry import register_attack
 from agentdojo.attacks.base_attacks import BaseAttack
 from agentdojo.base_tasks import BaseInjectionTask, BaseUserTask
+from agentdojo.benchmark import TaskResults
 from agentdojo.functions_runtime import FunctionsRuntime
-from agentdojo.logging import Logger
 from agentdojo.task_suite.task_suite import TaskSuite
+from agentdojo.types import ChatMessage, get_text_content_as_str
 
 
 def _compact(value: object) -> str:
     # Match make_ill.py: remove JSON formatting whitespace, keeping string spaces.
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _message_to_wire(message: ChatMessage) -> dict:
+    """Serialize a logged message to the OpenAI chat wire format the forged turns mimic.
+
+    An assistant answer carries plain-string ``content``; an assistant turn that calls
+    tools carries ``content: null`` next to its ``tool_calls``; a tool result keeps the
+    list-of-text-blocks form with its ``tool_call_id`` and function ``name``. This is the
+    native wire shape the model would receive, so the replayed turns read as real ones
+    rather than as agentdojo's internal multimodal content.
+    """
+    role = message["role"]
+    if role == "assistant":
+        if message["tool_calls"]:
+            return {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [_tool_call_to_openai(call) for call in message["tool_calls"]],
+            }
+        return {"content": get_text_content_as_str(message["content"] or []), "role": "assistant"}
+    if role == "tool":
+        return {
+            "content": message["error"] or _content_blocks_to_openai_content_blocks(message),
+            "tool_call_id": message["tool_call_id"],
+            "role": "tool",
+            "name": message["tool_call"].function,
+        }
+    return {
+        "role": "developer" if role == "system" else role,
+        "content": _content_blocks_to_openai_content_blocks(message),
+    }
 
 
 def _text_fields(message: dict) -> list[tuple[dict, str]]:
@@ -85,45 +126,43 @@ class MyAttack(BaseAttack):
         benign_messages_dir: Path | None = None,
     ) -> None:
         super().__init__(task_suite, target_pipeline)
+        model = next(
+            (element.model for element in getattr(target_pipeline, "elements", ()) if hasattr(element, "model")),
+            None,
+        )
+        self.model_name = model or target_pipeline.name or "openai-compatible"
         configured_dir = os.environ.get("MY_ATTACK_BENIGN_DIR")
         if benign_messages_dir is not None:
             self.benign_messages_dir = Path(benign_messages_dir)
+        elif configured_dir:
+            self.benign_messages_dir = Path(configured_dir)
         else:
-            self.benign_messages_dir = Path(configured_dir) if configured_dir else None
+            if model is None:
+                raise ValueError("my_attack needs a model name or an explicit benign log directory")
+            self.benign_messages_dir = (
+                Path(__file__).resolve().parent / "runs" / model.rsplit("/", 1)[-1] / "openai-compatible"
+            )
 
     def attack(self, user_task: BaseUserTask, injection_task: BaseInjectionTask) -> dict[str, str]:
+        # The vector sits inside a double-quoted YAML scalar in environment.yaml
+        # (e.g. banking's `subject: "{injection_incoming_transaction}"`), so the
+        # payload must be escaped as a double-quoted scalar body. yaml.safe_load
+        # decodes it back, so the model still receives the plain-quoted breakout.
         return {
-            vector: continuation.build_payload(injection_task.GOAL)
+            vector: _compact(continuation.build_payload(injection_task.GOAL))[1:-1]
             for vector, continuation in self._get_continuations(user_task).items()
         }
 
     def _load_benign_messages(self, user_task: BaseUserTask) -> list[dict]:
-        filename = f"messages_{self.task_suite.name}_{user_task.ID}_none_none.json"
-        if self.benign_messages_dir is not None:
-            paths = [self.benign_messages_dir / filename]
-        else:
-            if self.target_pipeline.name is None:
-                raise ValueError("my_attack needs a pipeline name or an explicit benign messages directory")
-            pipeline_name = self.target_pipeline.name.replace("/", "_")
-            logger = Logger.get()
-            logdir = getattr(logger, "logdir", None) or getattr(logger, "dirpath", None)
-            roots = [Path(logdir or "runs"), Path(__file__).resolve().parents[3] / "runs"]
-            paths = list(dict.fromkeys(root / pipeline_name / "messages_benign" / filename for root in roots))
-        for path in paths:
-            if path.is_file():
-                messages = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(messages, list) or not all(isinstance(message, dict) for message in messages):
-                    raise ValueError(f"Expected an API-format message list in {path}")
-                return messages
-        raise FileNotFoundError(
-            "Benign messages not found. Set MY_ATTACK_BENIGN_DIR to their directory. Tried: "
-            + ", ".join(str(path) for path in paths)
-        )
+        path = self.benign_messages_dir / self.task_suite.name / user_task.ID / "none" / "none.json"
+        result = TaskResults.model_validate_json(path.read_text(encoding="utf-8"))
+        return [_message_to_wire(message) for message in result.messages]
 
     def _replay_tools(self, messages: list[dict], user_task: BaseUserTask) -> Iterator[tuple[int, str]]:
         """Replay logged calls locally with canaries, preserving environment changes."""
         runtime = FunctionsRuntime(self.task_suite.tools)
         environment = self.task_suite.load_and_inject_default_environment(self.canary_injections)
+        environment = user_task.init_environment(environment)
         calls = {}
         for index, message in enumerate(messages):
             if message.get("role") == "assistant":
@@ -144,62 +183,109 @@ class MyAttack(BaseAttack):
                 yield index, tool_result_to_str(result)
 
     @lru_cache
-    def _get_continuations(self, user_task: BaseUserTask) -> dict[str, _Continuation]:
-        """Cache each candidate's tool boundaries and benign tail across goals."""
-        candidates = set(self.get_injection_candidates(user_task))
+    def _get_mocked_tool_responses(self, user_task: BaseUserTask) -> dict[str, list[dict]]:
+        """Cache all ground-truth responses that read each vector, without benign data."""
+        path = (
+            Path(__file__).resolve().parent / "mocked_tool_response" / "v1.2.2"
+            / self.task_suite.name / f"{user_task.ID}.json"
+        )
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+
+        runtime = FunctionsRuntime(self.task_suite.tools)
+        environment = user_task.init_environment(self.task_suite.load_and_inject_default_environment({}))
+        canary_environment = user_task.init_environment(
+            self.task_suite.load_and_inject_default_environment(self.canary_injections)
+        )
+        calls = user_task.ground_truth(environment)
+        canary_calls = user_task.ground_truth(canary_environment)
+        responses = {}
+        for index, (call, canary_call) in enumerate(zip(calls, canary_calls, strict=True)):
+            if call.function != canary_call.function:
+                raise ValueError(f"Ground-truth tool order differs with canaries for {user_task.ID}")
+            result, _ = runtime.run_function(
+                environment, call.function, copy.deepcopy(call.args), raise_on_error=True
+            )
+            text = tool_result_to_str(result)
+            canary_result, _ = runtime.run_function(
+                canary_environment, canary_call.function, copy.deepcopy(canary_call.args), raise_on_error=True
+            )
+            canary_text = tool_result_to_str(canary_result)
+            # Mimic vLLM's tool-call ids; hashing keeps regenerated caches identical.
+            digest = hashlib.sha256(f"{self.task_suite.name}/{user_task.ID}/{index}".encode()).hexdigest()
+            call_id = f"chatcmpl-tool-{digest[:16]}"
+            message = {
+                "content": [{"type": "text", "text": text}],
+                "tool_call_id": call_id,
+                "role": "tool",
+                "name": call.function,
+            }
+            for vector, canary in self.canary_injections.items():
+                if canary not in canary_text:
+                    continue
+                opening, closing = self._split_tool_message(message, canary_text, vector)
+                responses.setdefault(vector, []).append({
+                    "tool_call": call.model_copy(update={"id": call_id}).model_dump(),
+                    "message": message,
+                    "opening": opening,
+                    "closing": closing,
+                })
+        if not responses:
+            raise ValueError(f"{user_task.ID} is not injectable.")
+
+        # Per-goal subprocesses may share this cache; readers must see complete JSON.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(_compact(responses), encoding="utf-8")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return responses
+
+    def _get_benign_tails(self, user_task: BaseUserTask, candidates: set[str]) -> dict[str, list[dict]]:
+        """Use benign data only to select the messages replayed in step 2."""
         messages = self._load_benign_messages(user_task)
-        continuations = {}
+        tails = {}
         for index, result_text in self._replay_tools(messages, user_task):
-            found = [
-                vector
-                for vector in sorted(candidates - continuations.keys())
-                if self.canary_injections[vector] in result_text
-            ]
-            if not found:
-                continue
-            for vector in found:
-                opening, closing = self._split_tool_message(messages[index], result_text, vector)
-                continuations[vector] = _Continuation(opening, closing, messages[index + 1 :])
-            if candidates == continuations.keys():
+            for vector in sorted(candidates - tails.keys()):
+                if self.canary_injections[vector] in result_text:
+                    tails[vector] = messages[index + 1 :]
+            if candidates == tails.keys():
                 break
 
-        missing = candidates - continuations.keys()
-        if missing and continuations:
-            logging.warning(
-                "my_attack: benign trace for %s/%s never reads %s; using available vectors %s",
-                self.task_suite.name, user_task.ID, sorted(missing), sorted(continuations),
-            )
-        elif missing:
-            continuation = self._get_final_reply_continuation(messages, user_task)
-            continuations = {vector: continuation for vector in sorted(candidates)}
+        missing = candidates - tails.keys()
+        if missing:
+            if not messages or messages[-1].get("role") != "assistant" or messages[-1].get("tool_calls"):
+                raise ValueError(f"Benign trace for {user_task.ID} has no final assistant reply")
+            for vector in sorted(missing):
+                tails[vector] = [messages[-1]]
             logging.warning(
                 "my_attack: benign trace for %s/%s never reads %s; "
-                "closing the last tool response and inserting the final assistant reply as fallback",
+                "replaying the final assistant reply with mocked tool boundaries",
                 self.task_suite.name, user_task.ID, sorted(missing),
             )
-        return continuations
+        return tails
 
-    def _get_final_reply_continuation(
-        self, messages: list[dict], user_task: BaseUserTask
-    ) -> _Continuation:
-        """Close a tool response before replaying the complete final assistant turn."""
-        if not messages or messages[-1].get("role") != "assistant" or messages[-1].get("tool_calls"):
-            raise ValueError(f"Benign trace for {user_task.ID} has no final assistant reply")
-        tool = next((message for message in reversed(messages[:-1]) if message.get("role") == "tool"), None)
-        if tool is None:
-            raise ValueError(f"Benign trace for {user_task.ID} has no tool response to close")
-        fields = _text_fields(tool)
-        if not fields:
-            raise ValueError(f"Last tool response for {user_task.ID} has no text field")
-        parent, key = fields[-1]
-        opening, closing = _split_message(tool, -1, len(parent[key]))
-        return _Continuation(opening, closing, [messages[-1]])
+    @lru_cache
+    def _get_continuations(self, user_task: BaseUserTask) -> dict[str, _Continuation]:
+        responses = self._get_mocked_tool_responses(user_task)
+        tails = self._get_benign_tails(user_task, set(responses))
+        return {
+            vector: _Continuation(matches[0]["opening"], matches[0]["closing"], tails[vector])
+            for vector, matches in responses.items()
+        }
 
     def _split_tool_message(self, message: dict, canary_text: str, vector: str) -> tuple[str, str]:
-        """Split the benign tool JSON at the vector's actual insertion position.
+        """Split mocked tool JSON at the start of the vector's region.
+
+        The split lands right before the vector's original value, so that value
+        heads ``closing`` and stays visible to the model as the real field it
+        replaces (e.g. a transaction ``subject``) before the forged turns break
+        out. For a zero-width default this is simply the insertion point.
 
         Canary insertion can make YAML quote or wrap a field differently. Align
-        that output with the original benign text instead of copying the canary
+        that output with the original mocked text instead of copying the canary
         output. A null sentinel prevents matching letters inside canary names.
         """
         for key, canary in self.canary_injections.items():
@@ -210,7 +296,7 @@ class MyAttack(BaseAttack):
             raise ValueError(f"Tool message for {vector} has no API text field")
 
         # API tool messages usually have one text block. If there are several,
-        # choose the block that corresponds to the locally replayed tool output.
+        # choose the block that corresponds to the simulated tool output.
         matches = [
             (SequenceMatcher(None, canary_text, parent[key], autojunk=False), field_index)
             for field_index, (parent, key) in enumerate(fields)
@@ -219,4 +305,4 @@ class MyAttack(BaseAttack):
         for _, start, end, original_start, _ in matcher.get_opcodes():
             if start <= canary_position < end:
                 return _split_message(message, field_index, original_start)
-        raise ValueError(f"Cannot locate the insertion point for {vector} in the benign tool text")
+        raise ValueError(f"Cannot locate the insertion point for {vector} in the mocked tool text")

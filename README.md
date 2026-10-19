@@ -53,7 +53,7 @@ python -m ui.caseviewer         # http://localhost:8766
 
 
 # Experimental Setup
-Tested on agentdojo benchmark(full) for detail see below.
+Tested on AgentDojo benchmark v1.2.2 (full); the runner uses this fixed version.
 
 | Environment | Tools | User tasks | Injection tasks | Cross cases (User × Injection) |
 |---|---|---|---|---|
@@ -75,6 +75,23 @@ python run_agentdojo.py \
   --attack important_instructions / ours / others
 ```
 
+`my_attack` reads benign logs from `runs/<model-name>/openai-compatible/<suite>/<user_task>/none/none.json`
+and converts messages to API format in memory, solely to select the benign turns to replay.
+Closing and reopening tool responses use independent local ground-truth simulations cached in
+`mocked_tool_response/v1.2.2/<suite>/<user_task>.json`. All matching tool calls are
+cached; the first response per injection vector supplies its boundaries. If the benign run never
+reads a vector, its final assistant reply is replayed with the same mocked boundaries.
+
+```bash
+.venv/bin/python run_agentdojo.py \
+  --model-id qwen/qwen3-235b-a22b-2507 \
+  --logdir runs/qwen3-235b-a22b-2507_myattack_with_bait \
+  -ml my_attacks --attack my_attack
+```
+
+Set `MY_ATTACK_BENIGN_DIR` to override the directory containing the suite folders
+(for example, `runs/qwen3-235b-a22b-2507/openai-compatible`).
+
 **metrics:**
 utility: if the benign task completed
 security: if the malicious task are completed
@@ -84,7 +101,7 @@ security: if the malicious task are completed
 # Eval result
 
 
-| Overall | Benign | Important Instr | ChatInject | MyAttack |
+| Overall | Benign | Important Instr | ChatInject | MyAttack_withlog |
 |---|---|---|---|---|
 | ASR ↑ | – | 56.3 (534/949) | 35.2 (334/949) | |
 | Utility ↓ | 79.4 (77/97) | 33.8 (321/949) | 43.4 (412/949) | |
