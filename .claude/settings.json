@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env)",
+      "Bash(cd /pfs/lustrep1/users/reyang/structural_attack; ls -la .env 2>&1 && grep -o -E \"^[A-Z_]+=\" .env; ls; find /pfs/lustrep1/users/reyang /scratch/project_462001732/reyang -maxdepth 4 -type d -name \"runs\" 2>/dev/null | head)",
+      "Read(//pfs/lustrep1/users/reyang/**)"
+    ]
+  }
+}
