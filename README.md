@@ -107,7 +107,7 @@ ON all cases
 | Utility ↓ | 79.4 (77/97) | 34.0 (323/949) | 42.7 (405/949) |18.1 (172/949) |
 
 ON banking (16x9) + slack (21x5) + travel (20x7) = 389 cases
-| Overall | Benign | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default |
-|---|---|---|---|---|---|
-| ASR ↑ | – | 78.1 (304/389) | 55.5 (216/389) | 78.4 (305/389) | 67.6 (263/389) |
-| Utility ↓ | 75.4 (43/57) | 46.5 (181/389) | 26.7 (104/389) | 33.2 (129/389) | 19.0 (74/389) |
+| Overall | Benign | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default | MyAttack_on3rdllm |
+|---|---|---|---|---|---|---|
+| ASR ↑ | – | 78.1 (304/389) | 55.5 (216/389) | 78.4 (305/389) | 67.6 (263/389) | 72.2 (281/389) |
+| Utility ↓ | 75.4 (43/57) | 46.5 (181/389) | 26.7 (104/389) | 33.2 (129/389) | 19.0 (74/389) | 9.3 (36/389) |
