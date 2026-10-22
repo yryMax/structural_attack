@@ -83,6 +83,15 @@ sbatch -J vllm-glm45 --export=ALL,MODEL_PATH=/scratch/project_462001732/reyang/m
 ```
 the service will take ~10m to start, use tail -f vllm/logs/[.....].out to check the progress
 
+log the exact tokens each request is rendered into (chat template + tokenizer, server side):
+```
+python vllm/token_proxy.py serve --model-id qwen3-235b-a22b-instruct-2507      # prints its endpoint file
+python run_agentdojo.py --model-id qwen3-235b-a22b-instruct-2507 \
+    --endpoint vllm/endpoint-qwen3-235b-a22b-instruct-2507.proxy.env ...
+python vllm/token_proxy.py show vllm/token_logs/<log>.jsonl -i 0               # special tokens highlighted
+```
+servers started before the proxy existed need `--tokenizer /scratch/project_462001732/reyang/models/<model>`
+
 **metrics:**
 utility: if the benign task completed
 security: if the malicious task are completed

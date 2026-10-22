@@ -61,13 +61,15 @@ def result_path(logdir: Path, case: tuple[str, str, str | None], attack: str | N
     return logdir / PIPELINE_NAME / suite_name / user_task_id / (attack or "none") / f"{injection_task_id or 'none'}.json"
 
 
-def load_endpoint(model_id: str) -> None:
+def load_endpoint(model_id: str, path: Path | None = None) -> None:
     """Point agentdojo at the vLLM server for `model_id` if one is up: vllm/serve_*.sh write its URL
     and key to vllm/endpoint-<served name>.env. They override the environment and .env, which may
-    still hold a previous job's node and key."""
-    path = Path(__file__).parent / "vllm" / f"endpoint-{model_id}.env"
-    if not path.exists():
-        return
+    still hold a previous job's node and key. `path` picks another endpoint file, such as the
+    .proxy.env of vllm/token_proxy.py."""
+    if path is None:
+        path = Path(__file__).parent / "vllm" / f"endpoint-{model_id}.env"
+        if not path.exists():
+            return
     for line in path.read_text().splitlines():
         if line.startswith("export "):
             key, _, value = line.removeprefix("export ").partition("=")
@@ -140,8 +142,10 @@ def main() -> None:
                     help="module registering custom attacks, e.g. chatinject_attacks")
     ap.add_argument("-s", "--suite", dest="suites", action="append", default=[])
     ap.add_argument("-j", "--jobs", type=int, default=16)
+    ap.add_argument("--endpoint", type=Path, default=None,
+                    help="endpoint file; default vllm/endpoint-<model-id>.env (see vllm/token_proxy.py)")
     args = ap.parse_args()
-    load_endpoint(args.model_id)
+    load_endpoint(args.model_id, args.endpoint)
 
     for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
         importlib.import_module(module)
