@@ -75,6 +75,13 @@ def load_endpoint(model_id: str) -> None:
     print(f"endpoint {os.environ['OPENAI_COMPATIBLE_BASE_URL']} from {path}")
 
 
+def standalone_path(logdir: Path, suite_name: str, injection_task_id: str) -> Path:
+    """Before an attacked case, agentdojo runs its injection task on its own and caches the result
+    here. Every case with that injection task reads it, and writes it if it is missing, so two cases
+    writing it at once corrupt it for all later ones."""
+    return logdir / PIPELINE_NAME / suite_name / injection_task_id / "none" / "none.json"
+
+
 def is_done(path: Path) -> bool:
     """A case is done only if its result JSON is complete. agentdojo writes the file while a
     task runs, so a crashed case leaves a JSON without `utility` that must be re-run."""
@@ -149,17 +156,31 @@ def main() -> None:
     fork = mp.get_context("fork")
     queue = [(c, 1) for c in todo]
     running = {}  # process sentinel -> (process, case, attempt)
+    writing = set()  # (suite, injection_task) whose standalone result a running case is producing
     failed = []
     finished = 0
     while queue or running:
-        while queue and len(running) < args.jobs:
-            case, attempt = queue.pop(0)
+        i = 0
+        while i < len(queue) and len(running) < args.jobs:
+            case, attempt = queue[i]
+            suite_name, _, injection_task_id = case
+            if injection_task_id is not None:
+                standalone = standalone_path(args.logdir, suite_name, injection_task_id)
+                if not is_done(standalone):
+                    # one case per injection task produces the standalone result; the rest wait
+                    if (suite_name, injection_task_id) in writing:
+                        i += 1
+                        continue
+                    writing.add((suite_name, injection_task_id))
+                    standalone.unlink(missing_ok=True)  # partial or corrupt leftover from a crash
+            queue.pop(i)
             sys.stdout.flush()  # don't let the child inherit unflushed parent output
             proc = fork.Process(target=run_case, args=(args, case))
             proc.start()
             running[proc.sentinel] = (proc, case, attempt)
         for sentinel in wait(list(running)):
             proc, case, attempt = running.pop(sentinel)
+            writing.discard((case[0], case[2]))
             proc.join()
             if proc.exitcode == 0:
                 finished += 1
