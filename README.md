@@ -13,6 +13,7 @@ harness/        agent: Gemini + Gmail/Calendar tools
 ui/             local web viewers
   viewer.py       agent session logs (runs/miniagent/)
   caseviewer.py   test cases (cases/), with "Ask Gemini"
+  injviewer.py    AgentDojo attack runs (runs/), injections colored by part
   webui.py        shared server / page code
 injector.py     ToolCase + build injected cases
 gemini.py       one-shot Gemini call for case testing
@@ -49,6 +50,13 @@ and `ill` is the template with the payload injected into one string field.
 ```bash
 python injector.py              # template + target -> cases/email_ill.json (edit __main__ to change)
 python -m ui.caseviewer         # http://localhost:8766
+```
+
+Browse the injection cases of AgentDojo attack runs, each injected tool output colored by part
+(benign data / closes tool turn / forged turns / malicious task / re-opens tool turn):
+
+```bash
+python -m ui.injviewer          # http://localhost:8767, all runs under runs/
 ```
 
 

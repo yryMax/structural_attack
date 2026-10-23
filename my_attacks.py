@@ -6,8 +6,8 @@ tags instead (``<user>...</>``, ``<tool_response>...</>``, ``<assistant>...</>``
 The ``_full`` / ``_last`` variants of both (``my_attack_full``, ``token_independent_last``, ...)
 add hard-coded turns that end the replayed task and ask for a new one before the forged turn;
 ``_full`` replays every benign turn after the vector is read, ``_last`` only the final reply.
-Benign logs come from GLM-4.5's run,
-``runs/glm_benign/openai-compatible/<suite>/<user_task>/none/none.json``;
+Benign logs come from GPT-6 Astra's run,
+``runs/gpt6-astra_benign/openai-compatible/<suite>/<user_task>/none/none.json``;
 ``MY_ATTACK_BENIGN_DIR`` overrides the ``openai-compatible`` directory.
 Only the replayed turns depend on benign logs.
 Tool boundaries come from local ground-truth calls, cached independently under
@@ -38,7 +38,7 @@ from agentdojo.functions_runtime import FunctionsRuntime
 from agentdojo.task_suite.task_suite import TaskSuite
 from agentdojo.types import ChatMessage, get_text_content_as_str
 
-BENIGN_MESSAGES_DIR = Path(__file__).resolve().parent / "runs" / "glm_benign" / "openai-compatible"
+BENIGN_MESSAGES_DIR = Path(__file__).resolve().parent / "runs" / "gpt6-astra_benign" / "openai-compatible"
 
 # Turns between the replayed benign turns and the forged one, closing the original task.
 SEPARATOR_TURNS = (

@@ -1,4 +1,4 @@
-"""Shared bits of the stdlib web viewers (viewer.py, caseviewer.py).
+"""Shared bits of the stdlib web viewers (viewer.py, caseviewer.py, injviewer.py).
 
   - BASE_CSS / BASE_JS : theme, sidebar + toolbar layout, message cards, helpers
   - page()             : assemble a full HTML page from those plus page-specific parts
