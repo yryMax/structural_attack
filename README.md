@@ -98,7 +98,6 @@ python run_agentdojo.py --model-id qwen3-235b-a22b-instruct-2507 \
     --endpoint vllm/endpoint-qwen3-235b-a22b-instruct-2507.proxy.env ...
 python vllm/token_proxy.py show vllm/token_logs/<log>.jsonl -i 0               # special tokens highlighted
 ```
-servers started before the proxy existed need `--tokenizer /scratch/project_462001732/reyang/models/<model>`
 
 **metrics:**
 utility: if the benign task completed
@@ -109,13 +108,13 @@ security: if the malicious task are completed
 # Eval result
 
 ON all cases
-| Overall | Benign | Important Instr | ChatInject | MyAttack_default |
-|---|---|---|---|---|
-| ASR ↑ | – | 55.1 (523/949) | 35.9 (341/949) | 49.3 (468/949)|
-| Utility ↓ | 79.4 (77/97) | 34.0 (323/949) | 42.7 (405/949) |18.1 (172/949) |
+| Overall | Benign | Important Instr | ChatInject | MyAttack_default | IndependenceToken |
+|---|---|---|---|---|---|
+| ASR ↑ | – | 55.1 (523/949) | 35.9 (341/949) | 49.3 (468/949)| 62.7 (595/949) |
+| Utility ↓ | 79.4 (77/97) | 34.0 (323/949) | 42.7 (405/949) |18.1 (172/949) | 9.1 (86/949) |
 
 ON banking (16x9) + slack (21x5) + travel (20x7) = 389 cases
-| Overall | Benign | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default | MyAttack_on3rdllm |
-|---|---|---|---|---|---|---|
-| ASR ↑ | – | 78.1 (304/389) | 55.5 (216/389) | 78.4 (305/389) | 67.6 (263/389) | 72.2 (281/389) |
-| Utility ↓ | 75.4 (43/57) | 46.5 (181/389) | 26.7 (104/389) | 33.2 (129/389) | 19.0 (74/389) | 9.3 (36/389) |
+| Overall | Benign | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default | MyAttack_on3rdllm | IndependenceToken | SmarterTool |
+|---|---|---|---|---|---|---|---|---|
+| ASR ↑ | – | 78.1 (304/389) | 55.5 (216/389) | 78.4 (305/389) | 67.6 (263/389) | 72.2 (281/389) | 77.6 (302/389) | 63.2 (246/389) |
+| Utility ↓ | 75.4 (43/57) | 46.5 (181/389) | 26.7 (104/389) | 33.2 (129/389) | 19.0 (74/389) | 9.3 (36/389) | 9.8 (38/389) | 27.5 (107/389) |
