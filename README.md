@@ -13,7 +13,8 @@ harness/        agent: Gemini + Gmail/Calendar tools
 ui/             local web viewers
   viewer.py       agent session logs (runs/miniagent/)
   caseviewer.py   test cases (cases/), with "Ask Gemini"
-  injviewer.py    AgentDojo attack runs (runs/), injections colored by part
+  injviewer.py    AgentDojo runs (runs/): injection / benign / injection-alone cases, injections colored by part
+  chateditor.py   edit an AgentDojo conversation turn by turn, continue it on OpenRouter models
   webui.py        shared server / page code
 injector.py     ToolCase + build injected cases
 gemini.py       one-shot Gemini call for case testing
@@ -52,11 +53,22 @@ python injector.py              # template + target -> cases/email_ill.json (edi
 python -m ui.caseviewer         # http://localhost:8766
 ```
 
-Browse the injection cases of AgentDojo attack runs, each injected tool output colored by part
-(benign data / closes tool turn / forged turns / malicious task / re-opens tool turn):
+Browse the cases of AgentDojo runs, each injected tool output colored by part
+(benign data / closes tool turn / forged turns / malicious task / re-opens tool turn).
+Benign runs (user tasks, no injection) and the injection tasks run alone show up too; pick them with the "kind" filter:
 
 ```bash
 python -m ui.injviewer          # http://localhost:8767, all runs under runs/
+```
+
+Edit a conversation (loaded from a run, or new) turn by turn: system / user / assistant turns, tool calls
+from the suite's tools and their responses (prefilled by running the call in the case's AgentDojo
+environment). "Send" on any turn has an OpenRouter model reply to the
+conversation up to there, sent as agentdojo's openai-compatible pipeline sends it; the reply replaces
+the turns below. Key: `OPENROUTER_API_KEY`, or the OpenRouter `OPENAI_COMPATIBLE_*` pair in `.env`.
+
+```bash
+python -m ui.chateditor         # http://localhost:8769, model list in MODELS
 ```
 
 

@@ -1,11 +1,17 @@
-"""Web viewer for AgentDojo attack runs: every injection case, with the injected tool output colored by part.
+"""Web viewer for AgentDojo runs: every case, with the injected tool output colored by part.
 
     python -m ui.injviewer                  # serve ./runs at http://localhost:8767
     python -m ui.injviewer --dir runs --port 8767
 
-Pick a run and a case (suite × user task × injection task) in the sidebar to see the conversation
-the agent had. Each tool output that carries an injection is drawn as the text the model read,
-split into the parts of a structural attack:
+Pick a run and a case in the sidebar to see the conversation the agent had. A run holds any of
+three kinds of case (sidebar filter "kind"):
+
+  injection case     suite × user task × injection task, under attack (ASR + utility)
+  benign user task   a user task with no injection (utility), e.g. a --attack-less run
+  injection alone    an injection task's goal given as the user's task (whether the agent can do it at all)
+
+Each tool output that carries an injection is drawn as the text the model read, split into the
+parts of a structural attack:
 
   benign     the tool's real data around the injection
   mimic      injected text that continues the benign data
@@ -82,15 +88,17 @@ details.more summary { cursor: pointer; color: var(--accent); font-size: 12px; }
 BODY = r"""
 <div class="layout">
   <aside>
-    <h1>Injection cases</h1>
+    <h1>Cases</h1>
     <div class="filters">
       <select id="run"></select>
+      <select id="kind"><option value="">all kinds</option></select>
       <select id="suite"><option value="">all suites</option></select>
       <select id="outcome">
         <option value="">all outcomes</option>
         <option value="asr">attack succeeded</option>
         <option value="noasr">attack failed</option>
-        <option value="util">utility kept</option>
+        <option value="util">utility kept / task done</option>
+        <option value="noutil">utility lost / task failed</option>
         <option value="noeval">not evaluated</option>
       </select>
       <input id="q" placeholder="filter, e.g. ut_3 it_5">
@@ -110,6 +118,24 @@ BODY = r"""
 </div>
 """
 
+# naming the cases in a list (also used by chateditor.py)
+CASE_JS = r"""
+const KIND_LABEL = { attack: "injection cases", benign: "benign user tasks", injection: "injection tasks alone" };
+const short = s => s.replace("user_task_", "ut_").replace("injection_task_", "it_");
+
+function caseLabel(c) {
+  if (c.kind === "attack") return c.suite + " · " + short(c.user_task) + " × " + short(c.injection_task);
+  return c.suite + " · " + short(c.user_task) + (c.kind === "injection" ? " · alone" : " · benign");
+}
+
+function caseMeta(c) {
+  if (c.utility == null) return "⚠ not evaluated";
+  const u = c.utility ? "✓" : "✗";
+  if (c.kind === "attack") return "ASR " + (c.security ? "✓" : "✗") + " · utility " + u;
+  return (c.kind === "injection" ? "task done " : "utility ") + u;
+}
+"""
+
 JS = r"""
 let runs = [], run = null, cases = [], current = null, data = null, readable = true;
 
@@ -119,7 +145,6 @@ const KINDS = {
   reopen: "re-opens tool turn", instruction: "injected instruction",
 };
 const css = name => getComputedStyle(document.documentElement).getPropertyValue("--k-" + name).trim();
-const short = s => s.replace("user_task_", "ut_").replace("injection_task_", "it_");
 
 // undo literal escapes, however deeply nested (\\\\n, \\n, \n …)
 function unescape(s) {
@@ -136,31 +161,46 @@ function badge(label, v, bad) {
 
 // --- sidebar ------------------------------------------------------------------------------
 
-function caseLabel(c) { return c.suite + " · " + short(c.user_task) + " × " + short(c.injection_task); }
-
+// security is only set on injection cases, so the ASR filters skip the other kinds
 function filtered() {
+  const kind = document.getElementById("kind").value;
   const suite = document.getElementById("suite").value, oc = document.getElementById("outcome").value;
   const words = document.getElementById("q").value.toLowerCase().split(/\s+/).filter(Boolean);
   return cases.filter(c => {
+    if (kind && c.kind !== kind) return false;
     if (suite && c.suite !== suite) return false;
     if (oc === "asr" && c.security !== true) return false;
     if (oc === "noasr" && c.security !== false) return false;
     if (oc === "util" && c.utility !== true) return false;
+    if (oc === "noutil" && c.utility !== false) return false;
     if (oc === "noeval" && c.utility != null) return false;
     const label = caseLabel(c).toLowerCase() + " " + c.key.toLowerCase();
     return words.every(w => label.includes(w));
   });
 }
 
+// " · label 12.5% (1/8)" over the cases of `cs` that f() has a value for, or "" if none
+function stat(label, cs, f) {
+  const ev = cs.filter(c => f(c) != null), n = ev.filter(f).length;
+  return ev.length ? " · " + label + " " + (100 * n / ev.length).toFixed(1) + "% (" + n + "/" + ev.length + ")" : "";
+}
+
 function drawList() {
-  const list = filtered();
-  const asr = list.filter(c => c.security === true).length, done = list.filter(c => c.security != null).length;
-  document.getElementById("count").textContent =
-    list.length + " cases · ASR " + (done ? (100 * asr / done).toFixed(1) + "% (" + asr + "/" + done + ")" : "–");
-  renderSidebar(document.getElementById("cases"), list.map(c => ({
-    key: c.key, name: caseLabel(c),
-    meta: c.utility == null ? "⚠ not evaluated" : "ASR " + (c.security ? "✓" : "✗") + " · utility " + (c.utility ? "✓" : "✗"),
-  })), current, selectCase);
+  const list = filtered(), of = k => list.filter(c => c.kind === k);
+  document.getElementById("count").textContent = list.length + " cases"
+    + stat("ASR", of("attack"), c => c.security) + stat("utility", of("attack"), c => c.utility)
+    + stat("benign utility", of("benign"), c => c.utility) + stat("injection tasks done", of("injection"), c => c.utility);
+  renderSidebar(document.getElementById("cases"), list.map(c => ({ key: c.key, name: caseLabel(c), meta: caseMeta(c) })),
+    current, selectCase);
+}
+
+// refill a filter <select> with values, keeping its choice if still offered
+function fillSelect(id, values, all, label) {
+  const sel = document.getElementById(id), keep = sel.value;
+  sel.innerHTML = "";
+  sel.appendChild(el("option", null, all)).value = "";
+  for (const v of values) sel.appendChild(el("option", null, label ? label(v) : v)).value = v;
+  sel.value = values.includes(keep) ? keep : "";
 }
 
 async function loadRuns() {
@@ -182,11 +222,8 @@ async function selectRun(name, keepCase) {
   const r = await fetch("/api/cases?run=" + encodeURIComponent(name));
   if (run !== name) return;
   cases = r.ok ? await r.json() : [];
-  const suites = [...new Set(cases.map(c => c.suite))].sort();
-  const ss = document.getElementById("suite"), keep = ss.value;
-  ss.innerHTML = '<option value="">all suites</option>';
-  for (const s of suites) { const o = el("option", null, s); o.value = s; ss.appendChild(o); }
-  ss.value = suites.includes(keep) ? keep : "";
+  fillSelect("kind", Object.keys(KIND_LABEL).filter(k => cases.some(c => c.kind === k)), "all kinds", k => KIND_LABEL[k]);
+  fillSelect("suite", [...new Set(cases.map(c => c.suite))].sort(), "all suites");
   const pick = keepCase && cases.find(c => c.key === keepCase) ? keepCase : (filtered()[0] || {}).key;
   if (pick) selectCase(pick); else { current = null; data = null; drawList(); render(); }
 }
@@ -325,16 +362,20 @@ function render() {
     view.appendChild(c);
     return;
   }
-  title.textContent = run + " · " + data.suite + " · " + short(data.user_task) + " × " + short(data.injection_task);
-  badges.appendChild(badge("ASR", data.security, true));
-  badges.appendChild(document.createTextNode(" "));
-  badges.appendChild(badge("utility", data.utility, false));
+  title.textContent = run + " · " + caseLabel(data);
+  if (data.kind === "attack") {
+    badges.appendChild(badge("ASR", data.security, true));
+    badges.appendChild(document.createTextNode(" "));
+  }
+  badges.appendChild(badge(data.kind === "injection" ? "task done" : "utility", data.utility, false));
 
   const head = el("div", "rec");
   const g = el("div", "meta-grid");
   const row = (k, v, cls) => { g.appendChild(el("div", "k", k)); g.appendChild(el("div", cls || null, v)); };
-  row("attack", data.attack);
-  row("injection goal", data.goal || "(unknown)", "goal");
+  if (data.kind === "attack") row("attack", data.attack);
+  else if (data.kind === "benign") row("run", "benign: the user task, no injection");
+  else row("run", "injection task alone: its goal given as the user's task, no attack");
+  if (data.kind !== "benign") row("injection goal", data.goal || "(unknown)", "goal");
   if (data.duration != null) row("duration", data.duration.toFixed(1) + " s");
   if (data.run_error) row("run error", data.run_error, "goal");
   head.appendChild(g);
@@ -365,7 +406,7 @@ function setMode(r) {
 document.getElementById("readable").onclick = () => setMode(true);
 document.getElementById("exact").onclick = () => setMode(false);
 document.getElementById("run").onchange = e => selectRun(e.target.value);
-for (const id of ["suite", "outcome", "q"]) document.getElementById(id).oninput = drawList;
+for (const id of ["kind", "suite", "outcome", "q"]) document.getElementById(id).oninput = drawList;
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || !["j", "k"].includes(e.key)) return;
   const list = filtered(), i = list.findIndex(c => c.key === current);
@@ -381,7 +422,7 @@ document.addEventListener("keydown", e => {
 })();
 """
 
-PAGE = webui.page("Injection viewer", CSS, BODY, JS)
+PAGE = webui.page("AgentDojo viewer", CSS, BODY, CASE_JS + JS)
 
 
 # --- locating an injection in a tool output -------------------------------------------------
@@ -541,13 +582,24 @@ def _goal(suite: str, injection_task: str) -> str | None:
         return _goals.get((suite, injection_task))
 
 
-_KEY = re.compile(r"[\w.-]+/[\w.-]+/user_task_\d+/[\w.-]+/injection_task_\d+")
+# pipeline/suite/user_task_N/attack/injection_task_M   an injection case
+# pipeline/suite/user_task_N/none/none                 a benign run of a user task
+# pipeline/suite/injection_task_N/none/none            an injection task run alone, as the user's task
+_KEY = re.compile(r"[\w.-]+/[\w.-]+/(?:user_task_\d+/[\w.-]+/injection_task_\d+|(?:user|injection)_task_\d+/none/none)")
+_KINDS = ("attack", "benign", "injection")  # list order
 _TAIL = re.compile(rb'"(utility|security)":\s*(true|false)')
 _summaries: dict[Path, tuple[float, dict]] = {}
 
 
+def _kind(task: str, attack: str) -> str:
+    if attack != "none":
+        return "attack"
+    return "injection" if task.startswith("injection_task_") else "benign"
+
+
 def _case_paths(run_dir: Path) -> list[Path]:
-    return sorted(p for p in run_dir.glob("*/*/user_task_*/*/injection_task_*.json") if p.parent.name != "none")
+    return sorted(p for p in run_dir.glob("*/*/*_task_*/*/*.json")
+                  if _KEY.fullmatch("/".join(p.relative_to(run_dir).with_suffix("").parts)))
 
 
 def _summary(p: Path, run_dir: Path) -> dict:
@@ -561,8 +613,10 @@ def _summary(p: Path, run_dir: Path) -> dict:
         f.seek(max(0, f.tell() - 2048))
         found = dict((k.decode(), v == b"true") for k, v in _TAIL.findall(f.read()))
     parts = p.relative_to(run_dir).with_suffix("").parts
-    s = {"key": "/".join(parts), "suite": parts[1], "user_task": parts[2], "attack": parts[3],
-         "injection_task": parts[4], "utility": found.get("utility"), "security": found.get("security")}
+    kind = _kind(parts[2], parts[3])
+    s = {"key": "/".join(parts), "kind": kind, "suite": parts[1], "user_task": parts[2],
+         "attack": parts[3] if kind == "attack" else None, "injection_task": parts[4] if kind == "attack" else None,
+         "utility": found.get("utility"), "security": found.get("security") if kind == "attack" else None}
     _summaries[p] = (mtime, s)
     return s
 
@@ -577,9 +631,14 @@ def _run_dir(name: str):
 def _runs_payload():
     out = []
     for d in sorted(p for p in RUNS_DIR.iterdir() if p.is_dir()):
-        attacks = sorted({p.name for p in d.glob("*/*/user_task_*/*") if p.name != "none"})
-        if attacks:
-            out.append({"name": d.name, "attack": ", ".join(attacks)})
+        tasks = list(d.glob("*/*/*_task_*/*"))
+        label = sorted({p.name for p in tasks if p.name != "none"})
+        if any(p.name == "none" and p.parent.name.startswith("user_task_") for p in tasks):
+            label.append("benign")
+        if not label and tasks:
+            label.append("injection tasks")
+        if label:
+            out.append({"name": d.name, "attack": ", ".join(label)})
     return out
 
 
@@ -591,8 +650,9 @@ def _text(content) -> str:
 
 def _case_payload(run_dir: Path, key: str):
     d = json.loads((run_dir / (key + ".json")).read_text(encoding="utf-8"))
-    suite, it = d["suite_name"], d["injection_task_id"]
-    goal = _goal(suite, it)
+    suite, ut, it = d["suite_name"], d["user_task_id"], d["injection_task_id"]
+    kind = "attack" if it else _kind(ut, "none")
+    goal = _goal(suite, it or ut) if kind != "benign" else None
     # attacks often put the same text in every vector: such vectors can't be told apart, so match each
     # distinct text once and name all its vectors
     injections = {}
@@ -634,8 +694,9 @@ def _case_payload(run_dir: Path, key: str):
         messages.append(out)
     unseen = [{"vector": " / ".join(n for n in vecs if n not in seen), "length": len(s), "segments": segment(_unescape(s), goal)}
               for s, vecs in injections.items() if not seen.issuperset(vecs)]
-    return {"key": key, "suite": suite, "user_task": d["user_task_id"], "injection_task": it,
-            "attack": d.get("attack_type"), "goal": goal, "utility": d.get("utility"), "security": d.get("security"),
+    return {"key": key, "kind": kind, "suite": suite, "user_task": ut, "injection_task": it,
+            "attack": d.get("attack_type"), "goal": goal, "utility": d.get("utility"),
+            "security": d.get("security") if kind == "attack" else None,
             "duration": d.get("duration"), "run_error": d.get("error"), "messages": messages, "unseen": unseen}
 
 
@@ -651,7 +712,8 @@ class Handler(webui.JSONHandler):
         if parsed.path == "/api/cases":
             if run_dir is None:
                 return self._json({"error": "no such run"}, code=404)
-            return self._json([_summary(p, run_dir) for p in _case_paths(run_dir)])
+            items = [_summary(p, run_dir) for p in _case_paths(run_dir)]
+            return self._json(sorted(items, key=lambda c: _KINDS.index(c["kind"])))  # stable: path order within a kind
         if parsed.path == "/api/case":
             key = q.get("key", [""])[0]
             if run_dir is None or not _KEY.fullmatch(key) or not (run_dir / (key + ".json")).is_file():
@@ -665,7 +727,7 @@ class Handler(webui.JSONHandler):
 
 def main() -> None:
     global RUNS_DIR
-    ap = argparse.ArgumentParser(description="Web viewer for the injection cases of AgentDojo attack runs.")
+    ap = argparse.ArgumentParser(description="Web viewer for the cases of AgentDojo runs (injection, benign, injection task alone).")
     ap.add_argument("--dir", default="runs", help="directory of run dirs (default: runs)")
     ap.add_argument("--port", type=int, default=8767)
     ap.add_argument("--host", default="127.0.0.1")
