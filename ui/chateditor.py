@@ -4,8 +4,10 @@
     python -m ui.chateditor --dir runs --port 8769
 
 Load a case of a run from the sidebar (the same list and #run/key links as injviewer.py), or start
-a new chat in a suite, from AgentDojo's system prompt. Then add system / user / assistant turns, tool
-calls on the last assistant turn (one of the suite's tools) and a tool response for each pending call.
+a new chat in a suite, from AgentDojo's system prompt. Then add system / user / assistant turns (at the
+end, or below the turn whose "+ below" is on), tool calls on an assistant turn (one of the suite's tools)
+and a tool response for each pending call, which goes after the other tool turns of its assistant turn.
+An assistant turn and its tool turns stay together: no other turn can be inserted between them.
 Only the text, and a call's function and args, are edited: call ids, tool_call_id and the call copied
 into its tool turn are filled in the way agentdojo's runtime does. A new tool response starts as what
 agentdojo's runtime returns for the call: the case's environment (with its injections, set up for its
@@ -70,8 +72,10 @@ aside { width: 320px; flex-basis: 320px; }
 button.sm { border: 1px solid var(--border); background: var(--bg); color: var(--accent); cursor: pointer;
   font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; }
 button.sm:disabled { opacity: .5; cursor: default; }
+button.sm.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .rec > button.sm { margin-top: 8px; }
-.addbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 40px; }
+.addbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 14px 0 40px; }
+.addbar.mid { margin: 8px 0; padding: 8px; border: 1px dashed var(--accent); border-radius: 10px; }
 .placeholder { color: var(--muted); font-style: italic; }
 """
 
@@ -106,6 +110,7 @@ let meta = null;                             // {models, system, tools: {suite: 
 let runs = [], run = null, cases = [], current = null;
 let title = "", suite = null, messages = [];  // the conversation, as agentdojo ChatMessages
 let env = {};                                 // {user_task, injections} the tools run with
+let after = null;                             // the turn new turns go below (null: at the end)
 let busy = null, running = false;             // turn a request was sent from; a tool call is being run
 let error = null, gen = 0;                    // last failure; bumped per chat
 const info = new WeakMap();                   // reply -> "model · seconds"
@@ -130,12 +135,20 @@ function sync() {
     return !!m.tool_call;
   });
 }
-const lastTurn = () => messages.findLastIndex(m => m.role !== "tool");
 const answered = id => messages.some(m => m.role === "tool" && m.tool_call_id === id);
-// calls of the last assistant turn that no tool turn answers yet
-function pending() {
-  const a = messages[lastTurn()];
+// index of the turn new turns go below
+const slot = () => messages.includes(after) ? messages.indexOf(after) : messages.length - 1;
+// unanswered calls of the assistant turn that turn i is, or whose tool turns turn i is in
+function pendingAt(i) {
+  const a = messages[messages.slice(0, i + 1).findLastIndex(m => m.role !== "tool")];
   return a && a.role === "assistant" ? (a.tool_calls || []).filter(t => !answered(t.id)) : [];
+}
+// index right after the tool turns of the assistant turn that makes call t, -1 if the call is gone
+function blockEnd(t) {
+  let i = messages.findIndex(m => (m.tool_calls || []).includes(t));
+  if (i < 0) return -1;
+  while (messages[i + 1] && messages[i + 1].role === "tool") i++;
+  return i + 1;
 }
 
 // a new call id shaped like the conversation's last one (as its model makes them), else like OpenAI's
@@ -196,6 +209,9 @@ function messageNode(m, i) {
   const head = el("div", "head");
   head.appendChild(el("span", "role", m.role === "tool" ? "tool → agent · " + m.tool_call.function + " · " + m.tool_call_id : m.role));
   if (info.has(m)) head.appendChild(el("span", "info", info.get(m)));
+  const below = btn("+ below", () => { after = after === m ? null : m; render(); }, "sm" + (after === m ? " on" : ""));
+  below.title = "add new turns right below this one (click again to add at the end)";
+  head.appendChild(below);
   const s = btn(busy === i ? "sending…" : "Send ▶", () => send(i));
   s.disabled = busy !== null;
   s.title = "send the conversation up to here; the reply replaces every turn below";
@@ -206,7 +222,7 @@ function messageNode(m, i) {
   c.appendChild(area(textOf(m), v => { m.content = m.role === "assistant" && !v && m.tool_calls ? null : text(v); }));
   if (m.role === "assistant") {
     for (const t of m.tool_calls || []) c.appendChild(callNode(m, t));
-    if (i === lastTurn()) c.appendChild(btn("+ tool call", () => {
+    c.appendChild(btn("+ tool call", () => {
       const name = tools()[0].function.name;
       (m.tool_calls ||= []).push({ function: name, args: argsFor(name), id: newId(), placeholder_args: null });
       render();
@@ -215,12 +231,32 @@ function messageNode(m, i) {
   return c;
 }
 
-function add(m) {
-  messages.push(m);
+// insert turn m at index `at` (default: below the insertion point); later turns go below it
+function add(m, at = slot() + 1) {
+  messages.splice(at, 0, m);
+  if (after) after = m;
   sync();
   render();
-  const tas = $("view").querySelectorAll(".rec > textarea");
-  if (tas.length) tas[tas.length - 1].focus();
+  const ta = $("view").querySelectorAll(".rec > textarea")[messages.indexOf(m)];
+  if (ta) ta.focus();
+}
+
+function addBar() {
+  const i = slot(), inBlock = messages[i + 1] && messages[i + 1].role === "tool";
+  const bar = el("div", "addbar" + (after ? " mid" : ""));
+  for (const role of ["system", "user", "assistant"]) {
+    const b = btn("+ " + role, () => add(role === "assistant" ? { role, content: text(""), tool_calls: null } : { role, content: text("") }), "tb");
+    b.disabled = inBlock;
+    if (inBlock) b.title = "would split an assistant turn from its tool responses";
+    bar.appendChild(b);
+  }
+  const p = pendingAt(i)[0];
+  const tr = btn(running && p ? "running " + p.function + "…" : "+ tool response" + (p ? " to " + p.function : ""), () => respond(p), "tb");
+  tr.disabled = !p || running;
+  tr.title = "answers the next call of this assistant turn that has no response yet, with what agentdojo's runtime returns";
+  bar.appendChild(tr);
+  if (after) bar.appendChild(btn("✕ add at the end instead", () => { after = null; render(); }));
+  return bar;
 }
 
 function render() {
@@ -229,13 +265,16 @@ function render() {
   $("title").textContent = !meta ? "loading agentdojo…" : title || "Pick a case or start a new chat →";
   $("tools").textContent = meta && suite ? suite + " · " + tools().length + " tools" : "";
   if (!meta || !suite) return;
+  if (!messages.includes(after)) after = null;   // its turn was deleted or replaced
   messages.forEach((m, i) => {
     view.appendChild(messageNode(m, i));
-    if (i !== busy) return;
-    const c = el("div", "rec");
-    const below = messages.length - 1 - i;
-    c.appendChild(el("div", "placeholder", "asking " + $("model").value + "…" + (below ? " (the reply replaces the " + below + " turns below)" : "")));
-    view.appendChild(c);
+    if (i === busy) {
+      const c = el("div", "rec");
+      const below = messages.length - 1 - i;
+      c.appendChild(el("div", "placeholder", "asking " + $("model").value + "…" + (below ? " (the reply replaces the " + below + " turns below)" : "")));
+      view.appendChild(c);
+    }
+    if (m === after) view.appendChild(addBar());
   });
   if (error) {
     const c = el("div", "rec err");
@@ -243,15 +282,7 @@ function render() {
     c.appendChild(el("div", "body", error));
     view.appendChild(c);
   }
-  const bar = el("div", "addbar");
-  for (const role of ["system", "user", "assistant"])
-    bar.appendChild(btn("+ " + role, () => add(role === "assistant" ? { role, content: text(""), tool_calls: null } : { role, content: text("") }), "tb"));
-  const p = pending()[0];
-  const tr = btn(running && p ? "running " + p.function + "…" : "+ tool response" + (p ? " to " + p.function : ""), () => respond(p), "tb");
-  tr.disabled = !p || running;
-  tr.title = "answers the next call of the last assistant turn that has no response yet, with what agentdojo's runtime returns";
-  bar.appendChild(tr);
-  view.appendChild(bar);
+  if (!after) view.appendChild(addBar());
   view.querySelectorAll("textarea").forEach(fit);
 }
 
@@ -293,14 +324,15 @@ async function respond(p) {
     if (g === gen) error = "running the tool failed, fill in its response by hand: " + (e.message || e);
   }
   running = false;
-  if (g === gen && !answered(p.id)) add({ role: "tool", content: text(content), tool_call_id: p.id, tool_call: p, error: null });
+  const at = g === gen && !answered(p.id) ? blockEnd(p) : -1;   // after the other answers to its turn's calls
+  if (at >= 0) add({ role: "tool", content: text(content), tool_call_id: p.id, tool_call: p, error: null }, at);
   else render();
 }
 
 // --- loading --------------------------------------------------------------------------------
 
 function setChat(t, s, ms, e = {}) {
-  gen++; title = t; suite = s; messages = ms; env = e; error = null; busy = null; running = false;
+  gen++; title = t; suite = s; messages = ms; env = e; after = null; error = null; busy = null; running = false;
   sync(); render();
 }
 

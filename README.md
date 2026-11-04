@@ -61,7 +61,7 @@ Benign runs (user tasks, no injection) and the injection tasks run alone show up
 python -m ui.injviewer          # http://localhost:8767, all runs under runs/
 ```
 
-Edit a conversation (loaded from a run, or new) turn by turn: system / user / assistant turns, tool calls
+Edit a conversation (loaded from a run, or new) turn by turn, inserting below any turn: system / user / assistant turns, tool calls
 from the suite's tools and their responses (prefilled by running the call in the case's AgentDojo
 environment). "Send" on any turn has an OpenRouter model reply to the
 conversation up to there, sent as agentdojo's openai-compatible pipeline sends it; the reply replaces
@@ -93,6 +93,7 @@ python run_agentdojo.py \
   --logdir runs/qwen3-235b-a22b-2507 # output log
   --attack important_instructions / ours / others
   -ml my_attacks / others
+  -- recap (with logs)
 ```
 
 luanch vllm hosts:
