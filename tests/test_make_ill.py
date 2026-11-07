@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from injector import loads
-from make_ill import _closest_value, build_injection, compact, edit_distance, normalize
+from harness.injector import loads
+from harness.make_ill import _closest_value, build_injection, compact, edit_distance, normalize
 
 
 def reference_distance(left, right):

@@ -21,6 +21,11 @@ agentdojo = {git = "https://github.com/ethz-spylab/agentdojo.git", rev = "089ed4
 jupyter = "^1.0"
 ipykernel = "^6.0"
 
+# Pylance / pyright: resolve imports from .venv even when VS Code picked another interpreter
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"

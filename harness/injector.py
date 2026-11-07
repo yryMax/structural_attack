@@ -64,7 +64,7 @@ class ToolCase:
 
     def ask(self) -> str:
         """Send build_prompt() to Gemini and return the model's answer."""
-        import gemini
+        import harness.gemini as gemini
         return gemini.ask(self.build_prompt())
 
 

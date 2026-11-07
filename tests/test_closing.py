@@ -2,7 +2,7 @@ import copy
 import json
 import unittest
 
-from make_ill import INJECTION_POINT, build_case, close_result, compact
+from harness.make_ill import INJECTION_POINT, build_case, close_result, compact
 
 
 class ResultClosingTests(unittest.TestCase):

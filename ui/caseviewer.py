@@ -18,8 +18,8 @@ import json
 import time
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
-from injector import ToolCase, DupDict, loads
-import gemini
+from harness.injector import ToolCase, DupDict, loads
+import harness.gemini as gemini
 from . import webui
 
 CASE_DIR = Path("cases")  # overridden in main()

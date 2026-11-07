@@ -45,6 +45,9 @@ MODELS = [
     "deepseek/deepseek-v4.1-flash",
     "mistralai/mistral-large-4-0",
     "minimax/minimax-m3",
+    # the two models vllm/serve_multinode.sh serves, here on OpenRouter
+    "qwen/qwen3-235b-a22b-2507",
+    "z-ai/glm-4.5",
 ]
 
 
@@ -458,6 +461,8 @@ def _client():
 
 def _send(model: str, suite: str, messages: list[dict]) -> dict:
     """The assistant turn `model` adds to `messages` (agentdojo ChatMessages), made as OpenAILLM.query makes it."""
+    from run_agentdojo import use_system_role
+    use_system_role()  # the system prompt goes out as role `system`, as in run_agentdojo.py
     from agentdojo.agent_pipeline.llms.openai_llm import (
         _function_to_openai, _message_to_openai, _openai_to_assistant_message, chat_completion_request)
     from agentdojo.functions_runtime import FunctionCall

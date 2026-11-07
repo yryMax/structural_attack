@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from injector import DupDict, loads
-from make_ill import INJECTION_POINT, build_case, build_target, compact
+from harness.injector import DupDict, loads
+from harness.make_ill import INJECTION_POINT, build_case, build_target, compact
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "make_ill.py"

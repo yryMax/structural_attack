@@ -37,6 +37,7 @@ from multiprocessing.connection import wait
 from pathlib import Path
 
 from agentdojo.agent_pipeline.agent_pipeline import load_system_message
+from agentdojo.agent_pipeline.llms import openai_llm
 from agentdojo.attacks.attack_registry import ATTACKS
 from agentdojo.scripts import benchmark
 from agentdojo.task_suite.load_suites import get_suites
@@ -81,6 +82,24 @@ def load_endpoint(model_id: str, path: Path | None = None) -> None:
             key, _, value = line.removeprefix("export ").partition("=")
             os.environ[key] = value
     print(f"endpoint {os.environ['OPENAI_COMPATIBLE_BASE_URL']} from {path}")
+
+
+def use_system_role() -> None:
+    """Send agentdojo's system prompt as role `system` instead of `developer`.
+
+    The chat templates of Qwen3 and GLM-4.5 drop a `developer` message without an error. vLLM renames
+    it to `system` before rendering, but servers or providers that do not would silently run the agent
+    without its system prompt."""
+    to_openai = openai_llm._message_to_openai
+    if getattr(to_openai, "uses_system_role", False):
+        return
+
+    def message_to_openai(message, model_name):
+        converted = to_openai(message, model_name)
+        return {**converted, "role": "system"} if converted["role"] == "developer" else converted
+
+    message_to_openai.uses_system_role = True
+    openai_llm._message_to_openai = message_to_openai
 
 
 def standalone_path(logdir: Path, suite_name: str, injection_task_id: str) -> Path:
@@ -155,6 +174,7 @@ def main() -> None:
     ap.add_argument("--recap", action="store_true", help="add RECAP to the system message")
     args = ap.parse_args()
     load_endpoint(args.model_id, args.endpoint)
+    use_system_role()  # before forking, so every case inherits it
 
     for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
         importlib.import_module(module)

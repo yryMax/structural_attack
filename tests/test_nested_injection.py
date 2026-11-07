@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from make_ill import INJECTION_POINT, _closest_value, build_case, build_injection, compact, normalize
+from harness.make_ill import INJECTION_POINT, _closest_value, build_case, build_injection, compact, normalize
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "make_ill.py"

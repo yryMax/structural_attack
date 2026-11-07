@@ -12,7 +12,7 @@ It is sent as is through gemini.ask_request(); edit it first to try variations.
 import argparse
 import json
 
-import gemini
+import harness.gemini as gemini
 
 
 def main() -> None:

@@ -30,7 +30,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from injector import DupDict, loads
+from harness.injector import DupDict, loads
 
 
 INJECTION_POINT = "[INJECTION POINT]"

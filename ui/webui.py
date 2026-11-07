@@ -7,7 +7,9 @@
   - serve()            : run a ThreadingHTTPServer until Ctrl-C
 """
 
+import errno
 import json
+import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -179,7 +181,14 @@ class JSONHandler(BaseHTTPRequestHandler):
 
 
 def serve(handler, host: str, port: int, what: str) -> None:
-    server = ThreadingHTTPServer((host, port), handler)
+    try:
+        server = ThreadingHTTPServer((host, port), handler)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        sys.exit(f"port {port} on {host} is already in use (another viewer still running?).\n"
+                 f"  find it:  ss -ltnp | grep :{port}\n"
+                 f"  or pick another:  --port {port + 10}")
     print(f"serving {what} at http://{host}:{port}  (Ctrl-C to stop)")
     try:
         server.serve_forever()
