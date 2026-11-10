@@ -14,10 +14,11 @@ ui/                     local web viewers
   caseviewer.py           test cases (cases/), with "Ask Gemini"
   injviewer.py            AgentDojo runs (runs/): injection / benign / injection-alone cases, injections colored by part
   chateditor.py           edit an AgentDojo conversation turn by turn, continue it on OpenRouter models
+  playground.py           run one AgentDojo case (model × attack × user task × injection task) on OpenRouter and watch it
   tokenviewer.py          vllm/token_logs/: each request's prompt tokens by turn, added tokens marked, injected turns flagged
   webui.py                shared server / page code
 run_agentdojo.py        AgentDojo v1.2.2 runner: one process per case, N in parallel, resumable
-my_attacks.py           own attacks: my_attack, token_independent, smarter_tool (+ _full / _last variants)
+my_attacks.py           own attacks: one_turn, my_attack, token_independent, smarter_tool (+ _full / _last variants)
 chatinject_attacks.py   ChatInject baselines per chat template (qwen3, gpt-oss, llama-4, grok-2, glm-4.5,
                         kimi-k2, minimax-m3) and their multi-turn variants
 reference_attacks.py    from_reference: replay the injections logged by an earlier run
@@ -84,6 +85,16 @@ the turns below. Key: `OPENROUTER_API_KEY`, or the OpenRouter `OPENAI_COMPATIBLE
 python -m ui.chateditor         # http://localhost:8769, model list in MODELS
 ```
 
+Run one case instead of a batch: pick a model (qwen3-235b / glm-4.5 on OpenRouter, same key as the chat editor),
+any attack registered by `my_attacks`, `chatinject_attacks` or agentdojo (or none, benign), a suite, user task and
+injection task. The case runs as `run_agentdojo.py` runs one and is drawn like injviewer while it runs. Each request
+is kept in its own run dir under `runs/playground/`, listed in the sidebar's history. An attack module that changed
+on disk is re-imported before the next run, so edits to `my_attacks.py` need no restart.
+
+```bash
+python -m ui.playground         # http://localhost:8770, results in runs/playground/
+```
+
 
 # Experimental Setup
 Tested on AgentDojo benchmark v1.2.2 (full); the runner uses this fixed version.
@@ -111,9 +122,8 @@ python run_agentdojo.py \
 
 luanch vllm hosts:
 ```
-sbatch vllm/serve_multinode.sh                                    # Qwen3-235B
-sbatch -J vllm-glm45 --export=ALL,MODEL_PATH=/scratch/project_462001732/reyang/models/GLM-4.5 \
-    vllm/serve_multinode.sh           
+sbatch vllm/serve_multinode.sh                          # Qwen3-235B
+sbatch -J vllm-glm45 vllm/serve_multinode.sh GLM-4.5     # any dir under /scratch/project_462001732/reyang/models/
 ```
 the service will take ~10m to start, use tail -f vllm/logs/[.....].out to check the progress
 
@@ -135,10 +145,13 @@ security: if the malicious task are completed
 # Eval result
 
 ON all cases, Qwen3-235B-A22B-2507
-| Overall | Benign | Direct | Important Instr | ChatInject | MyAttack_default | IndependenceToken |
-|---|---|---|---|---|---|---|
-| ASR ↑ | – | 11.4 (108/949) | 55.1 (523/949) | 35.9 (341/949) | 49.3 (468/949)| 62.7 (595/949) |
-| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 34.0 (323/949) | 42.7 (405/949) |18.1 (172/949) | 9.1 (86/949) |
+| Overall | Benign | Direct | OneTurn | Important Instr | ChatInject | MyAttack_default | IndependenceToken |
+|---|---|---|---|---|---|---|---|
+| ASR ↑ | – | 11.4 (108/949) | 19.2 (182/949) | 55.1 (523/949) | 35.9 (341/949) | 49.3 (468/949)| 62.7 (595/949) |
+| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 65.8 (624/949) | 34.0 (323/949) | 42.7 (405/949) |18.1 (172/949) | 9.1 (86/949) |
+
+OneTurn vs Direct, paired by case (exact McNemar): ASR 113 cases gained / 39 lost, p = 1.5e-9;
+utility 46 gained / 153 lost, p = 1.3e-14. Run dirs: `runs/qwen_one_turnnew` vs `runs/qwen_dummy`.
 
 ON all cases, MiniMax-M3
 | Overall | Direct |

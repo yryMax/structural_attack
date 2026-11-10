@@ -6,6 +6,9 @@ are aliases for the corresponding ``my_attack`` variants. ``smarter_tool``
 omits copied tool text.
 The ``_full`` / ``_last`` variants add task separator turns; ``_last`` replays
 only the final assistant reply instead of every turn after the injection point.
+``one_turn`` uses runtime responses, keeps only the injected top-level list item,
+and includes the vector's original value at both copied boundaries only for
+structured responses. Plain-text boundaries omit all canary values.
 
 Benign logs: ``runs/gpt6-astra_benign/openai-compatible/<suite>/<task>/none/none.json``
 (override the root with ``MY_ATTACK_BENIGN_DIR``).
@@ -22,6 +25,8 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
+
+import yaml
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.agent_pipeline.ground_truth_pipeline import GroundTruthPipeline
@@ -48,6 +53,19 @@ def _escape_for_yaml(text: str) -> str:
     """Escape text inserted inside an existing YAML double-quoted string."""
     quoted = json.dumps(text, ensure_ascii=False)
     return quoted[1:-1]
+
+
+def _yaml_scalar_nodes(node: yaml.Node) -> Iterator[yaml.ScalarNode]:
+    """Walk YAML values and keys in serialization order."""
+    if isinstance(node, yaml.ScalarNode):
+        yield node
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from _yaml_scalar_nodes(item)
+    elif isinstance(node, yaml.MappingNode):
+        for key, value in node.value:
+            yield from _yaml_scalar_nodes(key)
+            yield from _yaml_scalar_nodes(value)
 
 
 def _to_turn(message: ChatMessage) -> dict:
@@ -109,13 +127,69 @@ class DirectAttack(FixedJailbreakAttack):
 
 @register_attack
 class OneTurnAttack(BaseAttack):
-    """baseline attack with only goal + tool response closing and opening"""
+    """One goal turn with tool boundaries limited to the injected list item."""
 
     name = "one_turn"
     copy_tool_text = True  # Set to False to omit copied tool text in ablations.
 
+    def _split_tool_response(self, text: str, vector: str, defaults: dict[str, str]) -> tuple[str, str]:
+        """Restore values in structured boundaries; omit them from plain text."""
+        canary = self.canary_injections[vector]
+
+        def restore(value: str) -> str:
+            for key, marker in self.canary_injections.items():
+                value = value.replace(marker, defaults[key])
+            return value
+
+        try:
+            root = yaml.compose(text, Loader=yaml.SafeLoader)
+        except yaml.YAMLError:
+            root = None
+
+        target = next(
+            (node for node in _yaml_scalar_nodes(root) if canary in node.value), None
+        ) if isinstance(root, (yaml.MappingNode, yaml.SequenceNode)) else None
+        if target is not None:
+            if isinstance(root, yaml.SequenceNode) and len(root.value) > 1:
+                root.value = [next(
+                    item for item in root.value
+                    if any(node is target for node in _yaml_scalar_nodes(item))
+                )]
+
+            nodes = list(_yaml_scalar_nodes(root))
+            target_index = nodes.index(target)
+            before, _, after = target.value.partition(canary)
+            for node in nodes:
+                node.value = restore(node.value)
+
+            # Multiline injected fields are double-quoted in the actual tool output,
+            # even when a canary or default would be emitted as a plain scalar.
+            # The prefix supplies the opening quote and the suffix the closing one;
+            # their other quotes come from the enclosing tool response.
+            target.style = '"'
+            boundaries = []
+            for value, is_prefix in (
+                (restore(before) + defaults[vector], True),
+                (defaults[vector] + restore(after), False),
+            ):
+                target.value = value
+                rendered = yaml.serialize(root, Dumper=yaml.SafeDumper, allow_unicode=True, width=float("inf")).strip()
+                rendered_root = yaml.compose(rendered, Loader=yaml.SafeLoader)
+                field = list(_yaml_scalar_nodes(rendered_root))[target_index]
+                boundaries.append(
+                    rendered[:field.end_mark.index - 1] if is_prefix else rendered[field.start_mark.index + 1:]
+                )
+            return boundaries[0], boundaries[1]
+
+        # Plain text keeps its layout but omits the injected values on both sides.
+        prefix, _, suffix = text.partition(canary)
+        for marker in self.canary_injections.values():
+            prefix = prefix.replace(marker, "")
+            suffix = suffix.replace(marker, "")
+        return prefix, suffix
+
     def _get_tool_boundaries(self, user_task: BaseUserTask) -> dict[str, tuple[str, str]]:
-        """Split the first tool response containing each canary; omit canary text."""
+        """Split each vector's first response; restore values only in structured data."""
         boundaries = {}
         if not self.copy_tool_text:
             for vector in sorted(self.get_injection_candidates(user_task)):
@@ -126,6 +200,11 @@ class OneTurnAttack(BaseAttack):
         environment = user_task.init_environment(environment)
         runtime = FunctionsRuntime(self.task_suite.tools)
         _, _, _, messages, _ = GroundTruthPipeline(user_task).query(user_task.PROMPT, runtime, environment)
+        # Defaults are escaped bodies of double-quoted environment.yaml scalars.
+        defaults = {
+            vector: yaml.safe_load('"' + value + '"')
+            for vector, value in self.task_suite.get_injection_vector_defaults().items()
+        }
 
         for message in messages:
             if message["role"] != "tool":
@@ -134,12 +213,7 @@ class OneTurnAttack(BaseAttack):
             for vector, canary in self.canary_injections.items():
                 if vector in boundaries or canary not in text:
                     continue
-                prefix, _, suffix = text.partition(canary)
-                # One response can contain several vectors or repeat the same vector.
-                for marker in self.canary_injections.values():
-                    prefix = prefix.replace(marker, "")
-                    suffix = suffix.replace(marker, "")
-                boundaries[vector] = (prefix, suffix)
+                boundaries[vector] = self._split_tool_response(text, vector, defaults)
 
         if not boundaries:
             raise ValueError(f"{user_task.ID} is not injectable.")

@@ -136,8 +136,10 @@ function caseMeta(c) {
 }
 """
 
-JS = r"""
-let runs = [], run = null, cases = [], current = null, data = null, readable = true;
+# drawing the case `data` (a _case_payload) in #view, #title and #badges, with the Readable / Exact buttons
+# (also used by playground.py); the page defines caseTitle(data)
+VIEW_JS = r"""
+let data = null, readable = true;
 
 const KINDS = {
   benign: "benign data", mimic: "mimicked benign data", close: "closes tool turn", exec: "forged execution turns",
@@ -158,92 +160,6 @@ function badge(label, v, bad) {
   if (v == null) return el("span", "badge na", label + " –");
   return el("span", "badge " + (v === bad ? "yes" : "no"), label + (v ? " ✓" : " ✗"));
 }
-
-// --- sidebar ------------------------------------------------------------------------------
-
-// security is only set on injection cases, so the ASR filters skip the other kinds
-function filtered() {
-  const kind = document.getElementById("kind").value;
-  const suite = document.getElementById("suite").value, oc = document.getElementById("outcome").value;
-  const words = document.getElementById("q").value.toLowerCase().split(/\s+/).filter(Boolean);
-  return cases.filter(c => {
-    if (kind && c.kind !== kind) return false;
-    if (suite && c.suite !== suite) return false;
-    if (oc === "asr" && c.security !== true) return false;
-    if (oc === "noasr" && c.security !== false) return false;
-    if (oc === "util" && c.utility !== true) return false;
-    if (oc === "noutil" && c.utility !== false) return false;
-    if (oc === "noeval" && c.utility != null) return false;
-    const label = caseLabel(c).toLowerCase() + " " + c.key.toLowerCase();
-    return words.every(w => label.includes(w));
-  });
-}
-
-// " · label 12.5% (1/8)" over the cases of `cs` that f() has a value for, or "" if none
-function stat(label, cs, f) {
-  const ev = cs.filter(c => f(c) != null), n = ev.filter(f).length;
-  return ev.length ? " · " + label + " " + (100 * n / ev.length).toFixed(1) + "% (" + n + "/" + ev.length + ")" : "";
-}
-
-function drawList() {
-  const list = filtered(), of = k => list.filter(c => c.kind === k);
-  document.getElementById("count").textContent = list.length + " cases"
-    + stat("ASR", of("attack"), c => c.security) + stat("utility", of("attack"), c => c.utility)
-    + stat("benign utility", of("benign"), c => c.utility) + stat("injection tasks done", of("injection"), c => c.utility);
-  renderSidebar(document.getElementById("cases"), list.map(c => ({ key: c.key, name: caseLabel(c), meta: caseMeta(c) })),
-    current, selectCase);
-}
-
-// refill a filter <select> with values, keeping its choice if still offered
-function fillSelect(id, values, all, label) {
-  const sel = document.getElementById(id), keep = sel.value;
-  sel.innerHTML = "";
-  sel.appendChild(el("option", null, all)).value = "";
-  for (const v of values) sel.appendChild(el("option", null, label ? label(v) : v)).value = v;
-  sel.value = values.includes(keep) ? keep : "";
-}
-
-async function loadRuns() {
-  runs = await (await fetch("/api/runs")).json();
-  const sel = document.getElementById("run");
-  sel.innerHTML = "";
-  for (const r of runs) {
-    const o = el("option", null, r.name + "  (" + r.attack + ")");
-    o.value = r.name;
-    sel.appendChild(o);
-  }
-}
-
-async function selectRun(name, keepCase) {
-  run = name;
-  document.getElementById("run").value = name;
-  document.getElementById("cases").innerHTML = "";
-  document.getElementById("count").textContent = "loading…";
-  const r = await fetch("/api/cases?run=" + encodeURIComponent(name));
-  if (run !== name) return;
-  cases = r.ok ? await r.json() : [];
-  fillSelect("kind", Object.keys(KIND_LABEL).filter(k => cases.some(c => c.kind === k)), "all kinds", k => KIND_LABEL[k]);
-  fillSelect("suite", [...new Set(cases.map(c => c.suite))].sort(), "all suites");
-  const pick = keepCase && cases.find(c => c.key === keepCase) ? keepCase : (filtered()[0] || {}).key;
-  if (pick) selectCase(pick); else { current = null; data = null; drawList(); render(); }
-}
-
-function selectCase(key) {
-  current = key;
-  try { history.replaceState(null, "", "#" + encodeURIComponent(run) + "/" + encodeURIComponent(key)); } catch (e) {}
-  drawList();
-  loadCase(run, key);
-}
-
-async function loadCase(r, key) {
-  const res = await fetch("/api/case?run=" + encodeURIComponent(r) + "&key=" + encodeURIComponent(key));
-  const d = await res.json();
-  if (current !== key || run !== r) return;
-  data = res.ok ? d : { key, error: d.error };
-  render();
-}
-
-// --- case ---------------------------------------------------------------------------------
 
 function textNode(s) {
   // in Readable mode, show where a literal newline escape was
@@ -362,7 +278,7 @@ function render() {
     view.appendChild(c);
     return;
   }
-  title.textContent = run + " · " + caseLabel(data);
+  title.textContent = caseTitle(data);
   if (data.kind === "attack") {
     badges.appendChild(badge("ASR", data.security, true));
     badges.appendChild(document.createTextNode(" "));
@@ -372,6 +288,7 @@ function render() {
   const head = el("div", "rec");
   const g = el("div", "meta-grid");
   const row = (k, v, cls) => { g.appendChild(el("div", "k", k)); g.appendChild(el("div", cls || null, v)); };
+  if (data.model) row("model", data.model);
   if (data.kind === "attack") row("attack", data.attack);
   else if (data.kind === "benign") row("run", "benign: the user task, no injection");
   else row("run", "injection task alone: its goal given as the user's task, no attack");
@@ -394,6 +311,7 @@ function render() {
     }
     view.appendChild(c);
   }
+  if (data.running) view.appendChild(el("div", "empty", "running… its next turns show up here"));
 }
 
 function setMode(r) {
@@ -405,6 +323,94 @@ function setMode(r) {
 
 document.getElementById("readable").onclick = () => setMode(true);
 document.getElementById("exact").onclick = () => setMode(false);
+"""
+
+JS = r"""
+let runs = [], run = null, cases = [], current = null;
+const caseTitle = d => run + " · " + caseLabel(d);
+
+// security is only set on injection cases, so the ASR filters skip the other kinds
+function filtered() {
+  const kind = document.getElementById("kind").value;
+  const suite = document.getElementById("suite").value, oc = document.getElementById("outcome").value;
+  const words = document.getElementById("q").value.toLowerCase().split(/\s+/).filter(Boolean);
+  return cases.filter(c => {
+    if (kind && c.kind !== kind) return false;
+    if (suite && c.suite !== suite) return false;
+    if (oc === "asr" && c.security !== true) return false;
+    if (oc === "noasr" && c.security !== false) return false;
+    if (oc === "util" && c.utility !== true) return false;
+    if (oc === "noutil" && c.utility !== false) return false;
+    if (oc === "noeval" && c.utility != null) return false;
+    const label = caseLabel(c).toLowerCase() + " " + c.key.toLowerCase();
+    return words.every(w => label.includes(w));
+  });
+}
+
+// " · label 12.5% (1/8)" over the cases of `cs` that f() has a value for, or "" if none
+function stat(label, cs, f) {
+  const ev = cs.filter(c => f(c) != null), n = ev.filter(f).length;
+  return ev.length ? " · " + label + " " + (100 * n / ev.length).toFixed(1) + "% (" + n + "/" + ev.length + ")" : "";
+}
+
+function drawList() {
+  const list = filtered(), of = k => list.filter(c => c.kind === k);
+  document.getElementById("count").textContent = list.length + " cases"
+    + stat("ASR", of("attack"), c => c.security) + stat("utility", of("attack"), c => c.utility)
+    + stat("benign utility", of("benign"), c => c.utility) + stat("injection tasks done", of("injection"), c => c.utility);
+  renderSidebar(document.getElementById("cases"), list.map(c => ({ key: c.key, name: caseLabel(c), meta: caseMeta(c) })),
+    current, selectCase);
+}
+
+// refill a filter <select> with values, keeping its choice if still offered
+function fillSelect(id, values, all, label) {
+  const sel = document.getElementById(id), keep = sel.value;
+  sel.innerHTML = "";
+  sel.appendChild(el("option", null, all)).value = "";
+  for (const v of values) sel.appendChild(el("option", null, label ? label(v) : v)).value = v;
+  sel.value = values.includes(keep) ? keep : "";
+}
+
+async function loadRuns() {
+  runs = await (await fetch("/api/runs")).json();
+  const sel = document.getElementById("run");
+  sel.innerHTML = "";
+  for (const r of runs) {
+    const o = el("option", null, r.name + "  (" + r.attack + ")");
+    o.value = r.name;
+    sel.appendChild(o);
+  }
+}
+
+async function selectRun(name, keepCase) {
+  run = name;
+  document.getElementById("run").value = name;
+  document.getElementById("cases").innerHTML = "";
+  document.getElementById("count").textContent = "loading…";
+  const r = await fetch("/api/cases?run=" + encodeURIComponent(name));
+  if (run !== name) return;
+  cases = r.ok ? await r.json() : [];
+  fillSelect("kind", Object.keys(KIND_LABEL).filter(k => cases.some(c => c.kind === k)), "all kinds", k => KIND_LABEL[k]);
+  fillSelect("suite", [...new Set(cases.map(c => c.suite))].sort(), "all suites");
+  const pick = keepCase && cases.find(c => c.key === keepCase) ? keepCase : (filtered()[0] || {}).key;
+  if (pick) selectCase(pick); else { current = null; data = null; drawList(); render(); }
+}
+
+function selectCase(key) {
+  current = key;
+  try { history.replaceState(null, "", "#" + encodeURIComponent(run) + "/" + encodeURIComponent(key)); } catch (e) {}
+  drawList();
+  loadCase(run, key);
+}
+
+async function loadCase(r, key) {
+  const res = await fetch("/api/case?run=" + encodeURIComponent(r) + "&key=" + encodeURIComponent(key));
+  const d = await res.json();
+  if (current !== key || run !== r) return;
+  data = res.ok ? d : { key, error: d.error };
+  render();
+}
+
 document.getElementById("run").onchange = e => selectRun(e.target.value);
 for (const id of ["kind", "suite", "outcome", "q"]) document.getElementById(id).oninput = drawList;
 document.addEventListener("keydown", e => {
@@ -422,7 +428,7 @@ document.addEventListener("keydown", e => {
 })();
 """
 
-PAGE = webui.page("AgentDojo viewer", CSS, BODY, CASE_JS + JS)
+PAGE = webui.page("AgentDojo viewer", CSS, BODY, CASE_JS + VIEW_JS + JS)
 
 
 # --- locating an injection in a tool output -------------------------------------------------

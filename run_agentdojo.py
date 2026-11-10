@@ -112,6 +112,15 @@ def use_system_role() -> None:
     openai_llm._message_to_openai = message_to_openai
 
 
+def setup_agentdojo(modules=()) -> None:
+    """Set agentdojo up as every case of a run sees it, then import the modules registering custom attacks.
+    ui/chateditor.py and ui/playground.py set it up the same way."""
+    disable_tool_output_wrapping()  # before attack imports
+    use_system_role()
+    for module in modules:
+        importlib.import_module(module)
+
+
 def standalone_path(logdir: Path, suite_name: str, injection_task_id: str) -> Path:
     """Before an attacked case, agentdojo runs its injection task on its own and caches the result
     here. Every case with that injection task reads it, and writes it if it is missing, so two cases
@@ -183,12 +192,8 @@ def main() -> None:
                     help="endpoint file; default vllm/endpoint-<model-id>.env (see vllm/token_proxy.py)")
     ap.add_argument("--recap", action="store_true", help="add RECAP to the system message")
     args = ap.parse_args()
-    disable_tool_output_wrapping()  # before attack imports and forks
     load_endpoint(args.model_id, args.endpoint)
-    use_system_role()  # before forking, so every case inherits it
-
-    for module in args.modules_to_load:  # import attack modules once too, so forks inherit them
-        importlib.import_module(module)
+    setup_agentdojo(args.modules_to_load)  # before forking, so every case inherits it and the attack imports
     if args.attack is not None and args.attack not in ATTACKS:
         sys.exit(f"unknown attack {args.attack!r} (missing -ml?); registered: {', '.join(sorted(ATTACKS))}")
 

@@ -3,7 +3,21 @@
     "allow": [
       "Bash(env)",
       "Bash(cd /pfs/lustrep1/users/reyang/structural_attack; ls -la .env 2>&1 && grep -o -E \"^[A-Z_]+=\" .env; ls; find /pfs/lustrep1/users/reyang /scratch/project_462001732/reyang -maxdepth 4 -type d -name \"runs\" 2>/dev/null | head)",
-      "Read(//pfs/lustrep1/users/reyang/**)"
+      "Read(//pfs/lustrep1/users/reyang/**)",
+      "Bash(.venv/bin/python /tmp/claude-10038032/-pfs-lustrep1-projappl-project-462001732-reyang-structural-attack/b05f2725-4718-402c-aa52-5b72eca4aa52/scratchpad/jscheck.py /tmp/claude-10038032/-pfs-lustrep1-projappl-project-462001732-reyang-structural-attack/b05f2725-4718-402c-aa52-5b72eca4aa52/scratchpad/tsjs)",
+      "Bash(PYTHONPATH=. .venv/bin/python /tmp/claude-10038032/-pfs-lustrep1-projappl-project-462001732-reyang-structural-attack/b05f2725-4718-402c-aa52-5b72eca4aa52/scratchpad/jscheck.py /tmp/claude-10038032/-pfs-lustrep1-projappl-project-462001732-reyang-structural-attack/b05f2725-4718-402c-aa52-5b72eca4aa52/scratchpad/tsjs)",
+      "Bash(.venv/bin/python -m ui.playground --port 8770)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" localhost:8770/api/history)",
+      "Bash(break)",
+      "Bash(curl -s localhost:8770/api/history)",
+      "Bash(curl -s localhost:8770/)",
+      "Bash(time curl -s --max-time 400 localhost:8770/api/meta)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python run_agentdojo.py --help)",
+      "Bash(.venv/bin/python -)",
+      "Bash(.venv/bin/python -m pytest -q tests/test_tool_output.py)",
+      "Bash(.venv/bin/python -m unittest tests.test_tool_output)",
+      "Bash(pkill -f \"ui.playground --port 8770\")"
     ]
   }
 }

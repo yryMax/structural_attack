@@ -405,8 +405,12 @@ PAGE = webui.page("Chat editor", CSS, BODY, injviewer.CASE_JS + JS)
 
 @functools.cache
 def _suites():
-    from agentdojo.task_suite.load_suites import get_suites  # slow to import on Lustre
-    return get_suites("v1.2.2")
+    """agentdojo's suites, with agentdojo set up as in run_agentdojo.py's runs: unfolded YAML tool outputs,
+    the system prompt sent as role `system` (slow to import on Lustre)."""
+    from run_agentdojo import BENCHMARK_VERSION, setup_agentdojo
+    from agentdojo.task_suite.load_suites import get_suites
+    setup_agentdojo()
+    return get_suites(BENCHMARK_VERSION)
 
 
 @functools.cache
@@ -461,8 +465,7 @@ def _client():
 
 def _send(model: str, suite: str, messages: list[dict]) -> dict:
     """The assistant turn `model` adds to `messages` (agentdojo ChatMessages), made as OpenAILLM.query makes it."""
-    from run_agentdojo import use_system_role
-    use_system_role()  # the system prompt goes out as role `system`, as in run_agentdojo.py
+    s = _suites()[suite]  # first: it makes _message_to_openai send the system prompt as role `system`
     from agentdojo.agent_pipeline.llms.openai_llm import (
         _function_to_openai, _message_to_openai, _openai_to_assistant_message, chat_completion_request)
     from agentdojo.functions_runtime import FunctionCall
@@ -471,7 +474,7 @@ def _send(model: str, suite: str, messages: list[dict]) -> dict:
             m["tool_calls"] = [FunctionCall(**t) for t in m["tool_calls"]]
         if m.get("tool_call"):
             m["tool_call"] = FunctionCall(**m["tool_call"])
-    tools = [_function_to_openai(f) for f in _suites()[suite].tools]
+    tools = [_function_to_openai(f) for f in s.tools]
     completion = chat_completion_request(_client(), model, [_message_to_openai(m, model) for m in messages], tools,
                                          reasoning_effort=None, temperature=0.0)
     if not completion.choices:  # OpenRouter reports some provider errors in a 200 response
