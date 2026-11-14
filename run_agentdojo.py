@@ -144,11 +144,40 @@ def use_system_role() -> None:
     openai_llm._message_to_openai = message_to_openai
 
 
+def keep_tool_call_extra_content() -> None:
+    """Send each tool call back with the `extra_content` the server returned on it.
+
+    Gemini 3 on Google's OpenAI-compatible endpoint puts a thought signature in
+    tool_calls[i].extra_content and answers 400 when a later request repeats the call without it.
+    agentdojo's FunctionCall has no field for it, so it is kept here by call id (each case runs in
+    its own process). Calls the server gave no extra_content, as from vLLM, are sent as before."""
+    if getattr(openai_llm._openai_to_tool_call, "keeps_extra_content", False):
+        return
+    extra_by_id: dict[str, object] = {}
+    to_tool_call, tool_call_to_openai = openai_llm._openai_to_tool_call, openai_llm._tool_call_to_openai
+
+    def openai_to_tool_call(tool_call):
+        extra = (tool_call.model_extra or {}).get("extra_content")
+        if extra is not None and tool_call.id is not None:
+            extra_by_id[tool_call.id] = extra
+        return to_tool_call(tool_call)
+
+    def tool_call_to_openai_with_extra(tool_call):
+        converted = tool_call_to_openai(tool_call)
+        extra = extra_by_id.get(tool_call.id)
+        return converted if extra is None else {**converted, "extra_content": extra}
+
+    openai_to_tool_call.keeps_extra_content = True
+    openai_llm._openai_to_tool_call = openai_to_tool_call
+    openai_llm._tool_call_to_openai = tool_call_to_openai_with_extra
+
+
 def setup_agentdojo(modules=()) -> None:
     """Set agentdojo up as every case of a run sees it, then import the modules registering custom attacks.
     ui/chateditor.py and ui/playground.py set it up the same way."""
     disable_tool_output_wrapping()  # before attack imports
     use_system_role()
+    keep_tool_call_extra_content()
     for module in modules:
         importlib.import_module(module)
 
