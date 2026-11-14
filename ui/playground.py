@@ -84,8 +84,8 @@ BODY = r"""
     <div class="toolbar">
       <span class="title" id="title">Pick a case →</span>
       <span id="badges"></span>
-      <button class="tb on" id="readable">Readable</button>
-      <button class="tb" id="exact">Exact</button>
+      <button class="tb on" id="readable" title="Decode literal escapes such as \n and \t in message text">Readable</button>
+      <button class="tb" id="exact" title="Preserve original message text, including literal backslashes; text without escapes looks the same">Exact</button>
     </div>
     <div id="view" class="content"><div class="empty">No case selected.</div></div>
   </main>

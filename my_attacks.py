@@ -9,6 +9,7 @@ only the final assistant reply instead of every turn after the injection point.
 ``one_turn`` uses runtime responses, keeps only the injected top-level list item,
 and includes the vector's original value at both copied boundaries only for
 structured responses. Plain-text boundaries omit all canary values.
+``from_multi_turn_search`` renders searched messages in the same tool boundaries.
 
 Benign logs: ``runs/gpt6-astra_benign/openai-compatible/<suite>/<task>/none/none.json``
 (override the root with ``MY_ATTACK_BENIGN_DIR``).
@@ -20,6 +21,7 @@ import copy
 import json
 import logging
 import os
+import re
 from collections.abc import Iterator
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -55,8 +57,28 @@ def _escape_for_yaml(text: str) -> str:
     return quoted[1:-1]
 
 
-def _yaml_scalar_nodes(node: yaml.Node) -> Iterator[yaml.ScalarNode]:
-    """Walk YAML values and keys in serialization order."""
+# When the tool output is re-serialized with yaml.safe_dump (allow_unicode=False), PyYAML
+# cannot keep a scalar in block/single-quoted form if it holds a non-ASCII char or a line that
+# begins with whitespace: it falls back to a double-quoted single line (literal \n, \uXXXX) that
+# no longer reads as separate forged turns. Fold non-ASCII to ASCII and strip the indentation
+# copied from nested tool YAML so the injected payload stays a real multi-line scalar.
+# (No effect on tools that return a Python repr, e.g. travel's dict-returning tools.)
+_NON_ASCII_FOLD = {
+    "—": "--", "–": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", " ": " ",
+}
+
+
+def _normalize_struct_payload(text: str) -> str:
+    """Keep a structural payload emittable as a non-escaped YAML scalar after safe_dump."""
+    for src, dst in _NON_ASCII_FOLD.items():
+        text = text.replace(src, dst)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\n[ \t]+", "\n", text)
+
+
+def _yaml_scalar_nodes(node: yaml.Node | None) -> Iterator[yaml.ScalarNode]:
+    """Walk YAML values and keys in serialization order; yields nothing for None (empty document)."""
     if isinstance(node, yaml.ScalarNode):
         yield node
     elif isinstance(node, yaml.SequenceNode):
@@ -134,9 +156,11 @@ class OneTurnAttack(BaseAttack):
 
     def _split_tool_response(self, text: str, vector: str, defaults: dict[str, str]) -> tuple[str, str]:
         """Restore values in structured boundaries; omit them from plain text."""
-        canary = self.canary_injections[vector]
+        canary = self.canary_injections[vector] # the data text that shows in benign log but get replaced by the injection payload
 
         def restore(value: str) -> str:
+            """
+            Restore the original value of each injection vector in a structured tool response."""
             for key, marker in self.canary_injections.items():
                 value = value.replace(marker, defaults[key])
             return value
@@ -196,22 +220,22 @@ class OneTurnAttack(BaseAttack):
                 boundaries[vector] = ("", "")
             return boundaries
 
-        environment = self.task_suite.load_and_inject_default_environment(self.canary_injections)
+        environment = self.task_suite.load_and_inject_default_environment(self.canary_injections) # "<CANARY---{vector}--->"
         environment = user_task.init_environment(environment)
         runtime = FunctionsRuntime(self.task_suite.tools)
-        _, _, _, messages, _ = GroundTruthPipeline(user_task).query(user_task.PROMPT, runtime, environment)
+        _, _, _, messages, _ = GroundTruthPipeline(user_task).query(user_task.PROMPT, runtime, environment) # bengin chat template
         # Defaults are escaped bodies of double-quoted environment.yaml scalars.
         defaults = {
             vector: yaml.safe_load('"' + value + '"')
             for vector, value in self.task_suite.get_injection_vector_defaults().items()
-        }
+        } # {vector_name: default_value that would be replaced by PI, ...}
 
         for message in messages:
             if message["role"] != "tool":
                 continue
-            text = get_text_content_as_str(message["content"] or [])
-            for vector, canary in self.canary_injections.items():
-                if vector in boundaries or canary not in text:
+            text = get_text_content_as_str(message["content"] or []) # transfer benign message content to a string （message is always 1 item）
+            for vector, canary in self.canary_injections.items(): # {vector_name:, <CANARY---{vector}---> }
+                if vector in boundaries or canary not in text: #只取第一次注入点
                     continue
                 boundaries[vector] = self._split_tool_response(text, vector, defaults)
 
@@ -219,17 +243,20 @@ class OneTurnAttack(BaseAttack):
             raise ValueError(f"{user_task.ID} is not injectable.")
         return boundaries
 
+    def render(self, goal: str) -> str:
+        """Render the middle turns between the copied tool boundaries."""
+        return _render_generic([{"role": "user", "content": goal}])
+
     def attack(self, user_task: BaseUserTask, injection_task: BaseInjectionTask) -> dict[str, str]:
-        """Insert one goal turn between the closing and reopening tool boundaries."""
+        """Insert rendered turns between the closing and reopening tool boundaries."""
         boundaries = self._get_tool_boundaries(user_task)
         injections = {}
         for vector, (tool_prefix, tool_suffix) in boundaries.items():
             close_tool = tool_suffix + "</><turn_end>"
-            middle_turns = [{"role": "user", "content": injection_task.GOAL}]
-            middle_text = _render_generic(middle_turns)
+            middle_text = self.render(injection_task.GOAL)
             reopen_tool = "<turn_start><tool_response>" + tool_prefix
             payload = "\n".join([close_tool, middle_text, reopen_tool])
-            injections[vector] = _escape_for_yaml(payload)
+            injections[vector] = _escape_for_yaml(_normalize_struct_payload(payload))
         return injections
 
 
@@ -273,7 +300,7 @@ class MyAttack(BaseAttack):
                 replay_turns=replay_turns,
                 goal=goal,
             )
-            injections[vector] = _escape_for_yaml(payload)
+            injections[vector] = _escape_for_yaml(_normalize_struct_payload(payload))
         return injections
 
     def _get_tool_boundaries(self, user_task: BaseUserTask) -> dict[str, tuple[str, str]]:
@@ -454,3 +481,65 @@ class TokenIndependentLast(MyAttackLast):
     """Alias for ``my_attack_last``."""
 
     name = "token_independent_last"
+
+FROM_SEARCH_TEMPLATE = "/project/project_462001732/reyang/TAP/runs/universal/search-20261111-053931/best_template.json"
+
+@register_attack
+class FromSearchAttack(BaseAttack):
+    """Reuse a universal_tap search result (``best_template.json``) as the injection.
+
+    The search (see ``TAP/universal_tap/evaluation.py``) optimises one template shared by
+    every task. Its render rule is ``prefix + separator + attacker_goal + separator +
+    suffix``; here the attacker goal is the injection task's ``GOAL``. Run with
+    ``-ml my_attacks --attack from_search --attack-kwargs '{"template_path": "..."}'``.
+    """
+
+    name = "from_search"
+
+    def __init__(
+        self,
+        task_suite: TaskSuite[Env],
+        target_pipeline: BasePipelineElement,
+        template_path: str | Path
+    ) -> None:
+        super().__init__(task_suite, target_pipeline)
+        self.template_path = template_path
+        data = json.loads(self.template_path.read_text(encoding="utf-8"))
+        self.prefix = data.get("prefix", "")
+        self.suffix = data.get("suffix", "")
+
+    def render(self, goal: str) -> str:
+        return f"{self.prefix}{goal}{self.suffix}"
+
+    def attack(self, user_task: BaseUserTask, injection_task: BaseInjectionTask) -> dict[str, str]:
+        injection = self.render(injection_task.GOAL)
+        return {vector: injection for vector in self.get_injection_candidates(user_task)}
+
+
+@register_attack
+class FromMultiTurnSearchAttack(OneTurnAttack):
+    """Render a text dialogue from turn_search inside OneTurnAttack.
+
+    payload_path (required, via --attack-kwargs) points to a turn_search best_payload.json,
+    e.g. turn-search-big or turn-train18. Stage annotations and search metadata are
+    ignored; the messages are rendered with the current GOAL.
+    """
+
+    name = "from_multi_turn_search"
+
+    def __init__(
+        self,
+        task_suite: TaskSuite[Env],
+        target_pipeline: BasePipelineElement,
+        payload_path: str | Path,
+    ) -> None:
+        super().__init__(task_suite, target_pipeline)
+        self.payload_path = Path(payload_path)
+        data = json.loads(self.payload_path.read_text(encoding="utf-8"))
+        turns = []
+        for message in data["messages"]:
+            turns.append({"role": message["role"], "content": message["content"], "tool_calls": []})
+        self.middle_template = _render_generic(turns)
+
+    def render(self, goal: str) -> str:
+        return self.middle_template.replace("{goal}", goal)

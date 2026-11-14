@@ -110,8 +110,8 @@ BODY = r"""
     <div class="toolbar">
       <span class="title" id="title">Pick a case →</span>
       <span id="badges"></span>
-      <button class="tb on" id="readable">Readable</button>
-      <button class="tb" id="exact">Exact</button>
+      <button class="tb on" id="readable" title="Decode literal escapes such as \n and \t in message text">Readable</button>
+      <button class="tb" id="exact" title="Preserve original message text, including literal backslashes; text without escapes looks the same">Exact</button>
     </div>
     <div id="view" class="content"><div class="empty">No case selected.</div></div>
   </main>
@@ -217,11 +217,13 @@ function legend(segs) {
 
 function plain(text, limit = 1500) {
   const box = el("div", "body");
-  if (text.length <= limit) { box.textContent = text; return box; }
-  box.textContent = text.slice(0, limit);
+  if (text.length <= limit) { box.appendChild(textNode(text)); return box; }
+  box.appendChild(textNode(text.slice(0, limit)));
   const det = el("details", "more");
   det.appendChild(el("summary", null, "show all " + text.length + " chars"));
-  det.appendChild(el("div", "body", text.slice(limit)));
+  const rest = el("div", "body");
+  rest.appendChild(textNode(text.slice(limit)));
+  det.appendChild(rest);
   box.appendChild(det);
   return box;
 }
@@ -238,14 +240,14 @@ function messageNode(m) {
     const c = el("div", "rec");
     const det = el("details", "more");
     det.appendChild(el("summary", null, "system prompt (" + m.text.length + " chars)"));
-    det.appendChild(el("div", "body", m.text));
+    det.appendChild(plain(m.text, Infinity));
     c.appendChild(det);
     return c;
   }
   if (m.role === "user") {
     const c = el("div", "rec user");
     c.appendChild(el("div", "role", "user"));
-    c.appendChild(el("div", "body", m.text));
+    c.appendChild(plain(m.text, Infinity));
     return c;
   }
   if (m.role === "assistant") {
@@ -315,10 +317,13 @@ function render() {
 }
 
 function setMode(r) {
+  const view = document.getElementById("view");
+  const expanded = [...view.querySelectorAll("details")].map(d => d.open);
   readable = r;
   document.getElementById("readable").classList.toggle("on", r);
   document.getElementById("exact").classList.toggle("on", !r);
   render();
+  view.querySelectorAll("details").forEach((d, i) => { d.open = !!expanded[i]; });
 }
 
 document.getElementById("readable").onclick = () => setMode(true);
@@ -432,13 +437,6 @@ PAGE = webui.page("AgentDojo viewer", CSS, BODY, CASE_JS + VIEW_JS + JS)
 
 
 # --- locating an injection in a tool output -------------------------------------------------
-
-_ESC = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "'": "'", "\\": "\\", "/": "/"}
-
-
-def _unescape(s: str) -> str:
-    return re.sub(r"\\(.)", lambda m: _ESC.get(m.group(1), m.group(0)), s)
-
 
 # one escape sequence (any number of backslashes deep), or one whitespace char
 _CANON = re.compile(r"\\+(u[0-9a-fA-F]{4}|.)|\s", re.S)
@@ -698,7 +696,7 @@ def _case_payload(run_dir: Path, key: str):
                     segs.append({"kind": "benign", "role": None, "text": text[pos:], "goal": []})
                 out["segments"], out["vectors"] = segs, vecs
         messages.append(out)
-    unseen = [{"vector": " / ".join(n for n in vecs if n not in seen), "length": len(s), "segments": segment(_unescape(s), goal)}
+    unseen = [{"vector": " / ".join(n for n in vecs if n not in seen), "length": len(s), "segments": segment(s, goal)}
               for s, vecs in injections.items() if not seen.issuperset(vecs)]
     return {"key": key, "kind": kind, "suite": suite, "user_task": ut, "injection_task": it,
             "attack": d.get("attack_type"), "goal": goal, "utility": d.get("utility"),

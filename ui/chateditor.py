@@ -1,7 +1,7 @@
 """Chat editor for AgentDojo conversations: edit one turn by turn and let an OpenRouter model continue it.
 
     python -m ui.chateditor                 # serve ./runs at http://localhost:8769
-    python -m ui.chateditor --dir runs --port 8769
+    python -m ui.chateditor --dir runs --port 8769 --save-dir chats
 
 Load a case of a run from the sidebar (the same list and #run/key links as injviewer.py), or start
 a new chat in a suite, from AgentDojo's system prompt. Then add system / user / assistant turns (at the
@@ -16,6 +16,11 @@ user task) after all earlier calls of the conversation, run in order.
 "Send" on a turn sends the conversation up to that turn to the chosen model, the way agentdojo's
 openai-compatible pipeline sends it (its message conversion, the suite's tools, temperature 0), and
 puts the reply right after that turn, replacing all turns below it. Run files are never written.
+"Save" (or Ctrl+S) writes the open chat, as edited, to <save-dir>/<name>.json (default chats/): its
+suite, environment, the case it came from and its turns. "Saved chats" in the sidebar opens one again
+(link: #saved:<name>); saving it again overwrites its file, saving under a name in use asks first.
+"Status Tracker" toggles the same request/progress/next-step instruction as run_agentdojo.py --recap
+in the editable system message. New chats enable it; loaded cases keep their original system message.
 
 The OpenRouter key is OPENROUTER_API_KEY, or OPENAI_COMPATIBLE_API_KEY when OPENAI_COMPATIBLE_BASE_URL
 points at OpenRouter (as in .env for the runs made through it).
@@ -25,7 +30,9 @@ import argparse
 import functools
 import json
 import os
+import re
 import threading
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -56,7 +63,7 @@ aside { width: 320px; flex-basis: 320px; }
 .filters { display: grid; gap: 6px; margin: 0 4px 14px; }
 .filters .row { display: flex; gap: 6px; }
 .filters .row select { flex: 1; }
-.filters select, .filters input, .toolbar select, .tc select { font: inherit; font-size: 13px; padding: 4px 8px;
+.filters select, .filters input, .toolbar select, .toolbar input, .tc select { font: inherit; font-size: 13px; padding: 4px 8px;
   border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
 .filters .count, .info { font-size: 12px; color: var(--muted); }
 .content { max-width: 1000px; }
@@ -80,6 +87,8 @@ button.sm.on { background: var(--accent); color: #fff; border-color: var(--accen
 .addbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 14px 0 40px; }
 .addbar.mid { margin: 8px 0; padding: 8px; border: 1px dashed var(--accent); border-radius: 10px; }
 .placeholder { color: var(--muted); font-style: italic; }
+#save-name { width: 220px; }
+#save-status.bad { color: var(--danger); }
 """
 
 BODY = r"""
@@ -89,6 +98,9 @@ BODY = r"""
     <div class="filters">
       <div class="row"><select id="suite"></select><button class="tb" id="new" disabled>New</button></div>
     </div>
+    <h1>Saved chats</h1>
+    <div class="filters"><div class="count" id="saved-count"></div></div>
+    <div id="saved"></div>
     <h1>Load from runs</h1>
     <div class="filters">
       <select id="run"></select>
@@ -101,6 +113,10 @@ BODY = r"""
     <div class="toolbar">
       <span class="title" id="title"></span>
       <span class="live" id="tools"></span>
+      <span class="info" id="save-status"></span>
+      <input id="save-name" placeholder="file name" title="saved as <save-dir>/<name>.json" disabled>
+      <button class="tb" id="save" disabled title="save this chat, as edited, to its own file (Ctrl+S)">Save</button>
+      <button class="tb" id="status-tracker" disabled title="Summarize the user's request, progress, and next step before each reply">Status Tracker: off</button>
       <select id="model"></select>
     </div>
     <div id="view" class="content"></div>
@@ -109,13 +125,15 @@ BODY = r"""
 """
 
 JS = r"""
-let meta = null;                             // {models, system, tools: {suite: [OpenAI tool definitions]}}
+let meta = null;                             // {models, system, status_tracker, tools: {suite: [OpenAI tool definitions]}}
 let runs = [], run = null, cases = [], current = null;
 let title = "", suite = null, messages = [];  // the conversation, as agentdojo ChatMessages
 let env = {};                                 // {user_task, injections} the tools run with
 let after = null;                             // the turn new turns go below (null: at the end)
 let busy = null, running = false;             // turn a request was sent from; a tool call is being run
 let error = null, gen = 0;                    // last failure; bumped per chat
+let source = null, saved = null;              // {run, key} the chat was loaded from; the saved file it is bound to
+let savedList = [];                           // the saved chats: [{name, title, suite, turns, mtime}]
 const info = new WeakMap();                   // reply -> "model · seconds"
 
 const $ = id => document.getElementById(id);
@@ -124,6 +142,35 @@ const text = s => [{ type: "text", content: s }];
 const textOf = m => (m.content || []).map(b => b.content || "").join("\n");
 const fit = ta => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight + 2, 480) + "px"; };
 function btn(label, onclick, cls = "sm") { const b = el("button", cls, label); b.onclick = onclick; return b; }
+
+function hasStatusTracker() {
+  return !!meta && messages.some(m => m.role === "system" && textOf(m).includes(meta.status_tracker));
+}
+
+function updateStatusTracker() {
+  const b = $("status-tracker"), enabled = hasStatusTracker();
+  b.textContent = "Status Tracker: " + (enabled ? "on" : "off");
+  b.classList.toggle("on", enabled);
+  b.setAttribute("aria-pressed", String(enabled));
+  b.disabled = !meta || !suite || busy !== null;
+}
+
+function toggleStatusTracker() {
+  if (!meta || !suite || busy !== null) return;
+  if (hasStatusTracker()) {
+    messages = messages.filter(m => {
+      if (m.role !== "system" || !textOf(m).includes(meta.status_tracker)) return true;
+      const value = textOf(m).split("\n" + meta.status_tracker).join("").split(meta.status_tracker).join("");
+      m.content = text(value);
+      return !!value.trim();
+    });
+  } else {
+    const m = messages.find(m => m.role === "system");
+    if (m) m.content = text(textOf(m) + "\n" + meta.status_tracker);
+    else messages.unshift({ role: "system", content: text(meta.status_tracker) });
+  }
+  render();
+}
 
 // --- keeping the conversation well formed -------------------------------------------------
 
@@ -222,7 +269,10 @@ function messageNode(m, i) {
   head.appendChild(btn("✕", () => { messages.splice(i, 1); sync(); render(); }));
   c.appendChild(head);
   // an assistant turn that only calls tools has no content (null), like agentdojo's
-  c.appendChild(area(textOf(m), v => { m.content = m.role === "assistant" && !v && m.tool_calls ? null : text(v); }));
+  c.appendChild(area(textOf(m), v => {
+    m.content = m.role === "assistant" && !v && m.tool_calls ? null : text(v);
+    if (m.role === "system") updateStatusTracker();
+  }));
   if (m.role === "assistant") {
     for (const t of m.tool_calls || []) c.appendChild(callNode(m, t));
     c.appendChild(btn("+ tool call", () => {
@@ -267,6 +317,8 @@ function render() {
   view.innerHTML = "";
   $("title").textContent = !meta ? "loading agentdojo…" : title || "Pick a case or start a new chat →";
   $("tools").textContent = meta && suite ? suite + " · " + tools().length + " tools" : "";
+  updateStatusTracker();
+  $("save").disabled = $("save-name").disabled = !suite;
   if (!meta || !suite) return;
   if (!messages.includes(after)) after = null;   // its turn was deleted or replaced
   messages.forEach((m, i) => {
@@ -332,10 +384,67 @@ async function respond(p) {
   else render();
 }
 
+// --- saving ---------------------------------------------------------------------------------
+
+const safeName = s => s.replace(/[^\w.-]+/g, "_").replace(/^[._]+|_+$/g, "").slice(0, 120);
+const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+function saveStatus(msg, bad = false) { const s = $("save-status"); s.textContent = msg; s.classList.toggle("bad", bad); }
+
+async function save(overwrite = false) {
+  if (!suite) return;
+  const name = safeName($("save-name").value.trim());
+  if (!name) return saveStatus("give the file a name", true);
+  $("save-name").value = name;
+  const chat = { title, suite, env, source, messages };
+  saveStatus("saving…");
+  try {
+    const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, overwrite: overwrite || name === saved, chat }) });
+    const res = await r.json();
+    if (r.status === 409) {
+      saveStatus("");
+      if (confirm(name + ".json is already saved. Overwrite it?")) return save(true);
+      return;
+    }
+    if (!r.ok) throw new Error(res.error);
+    saved = name;
+    saveStatus("saved " + new Date().toTimeString().slice(0, 8) + " → " + res.path);
+    try { history.replaceState(null, "", "#saved:" + encodeURIComponent(name)); } catch (e) {}
+    current = null;
+    drawList();
+    loadSavedList();
+  } catch (e) { saveStatus("save failed: " + (e.message || e), true); }
+}
+
+async function loadSavedList() {
+  try { savedList = await (await fetch("/api/saved")).json(); } catch (e) { savedList = []; }
+  drawSaved();
+}
+
+function drawSaved() {
+  $("saved-count").textContent = savedList.length ? savedList.length + " saved" : "none yet";
+  renderSidebar($("saved"), savedList.map(c => ({ key: c.name, name: c.name, meta: (c.suite || "?") + " · " + c.turns + " turns · " + c.mtime })),
+                current ? null : saved, loadSaved);
+}
+
+async function loadSaved(name) {
+  current = null;
+  drawList();
+  try { history.replaceState(null, "", "#saved:" + encodeURIComponent(name)); } catch (e) {}
+  const r = await fetch("/api/saved?name=" + encodeURIComponent(name));
+  const d = await r.json();
+  if (!r.ok) { saveStatus(d.error, true); return; }
+  setChat(d.title || name, d.suite, d.messages, d.env || {}, d.source || null, name);
+}
+
 // --- loading --------------------------------------------------------------------------------
 
-function setChat(t, s, ms, e = {}) {
+function setChat(t, s, ms, e = {}, src = null, name = null) {
   gen++; title = t; suite = s; messages = ms; env = e; after = null; error = null; busy = null; running = false;
+  source = src; saved = name;
+  $("save-name").value = name || safeName(src ? src.run + "_" + short(src.key.split("/").slice(1).join("_")) : "new_" + s + "_" + stamp());
+  saveStatus(name ? "opened " + name + ".json" : "");
+  drawSaved();
   sync(); render();
 }
 
@@ -344,7 +453,10 @@ function newChat() {
   drawList();
   try { history.replaceState(null, "", location.pathname); } catch (e) {}
   const s = $("suite").value;
-  setChat("new chat · " + s, s, [{ role: "system", content: text(meta.system) }, { role: "user", content: text("") }]);
+  setChat("new chat · " + s, s, [
+    { role: "system", content: text(meta.system + "\n" + meta.status_tracker) },
+    { role: "user", content: text("") },
+  ]);
 }
 
 function drawList() {
@@ -374,20 +486,29 @@ async function loadCase(key) {
   const r = await fetch("/api/chat?run=" + encodeURIComponent(run) + "&key=" + encodeURIComponent(key));
   const d = await r.json();
   if (current !== key) return;
-  if (r.ok) setChat(run + " · " + caseLabel(d), d.suite, d.messages, d.env);
+  if (r.ok) setChat(run + " · " + caseLabel(d), d.suite, d.messages, d.env, { run, key });
   else { error = d.error; render(); }
 }
 
 $("run").onchange = e => selectRun(e.target.value);
 $("q").oninput = drawList;
 $("new").onclick = newChat;
+$("status-tracker").onclick = toggleStatusTracker;
+$("save").onclick = () => save();
+$("save-name").onkeydown = e => { if (e.key === "Enter") save(); };
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
+});
 $("model").onchange = () => { try { localStorage.setItem("model", $("model").value); } catch (e) {} };
 
 (async () => {
   render();
+  loadSavedList();
   runs = await (await fetch("/api/runs")).json();
   for (const r of runs) $("run").appendChild(el("option", null, r.name + "  (" + r.attack + ")")).value = r.name;
-  const [hRun, ...rest] = decodeURIComponent(location.hash.slice(1)).split("/");
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash.startsWith("saved:")) loadSaved(hash.slice(6));
+  const [hRun, ...rest] = hash.startsWith("saved:") ? [] : hash.split("/");
   const first = runs.find(r => r.name === hRun) || runs[0];
   if (first) selectRun(first.name, rest.join("/"));
   meta = await (await fetch("/api/meta")).json();   // waits for agentdojo to import
@@ -415,9 +536,10 @@ def _suites():
 
 @functools.cache
 def _meta():
+    from run_agentdojo import RECAP
     from agentdojo.agent_pipeline.agent_pipeline import load_system_message
     from agentdojo.agent_pipeline.llms.openai_llm import _function_to_openai
-    return {"models": MODELS, "system": load_system_message(None),
+    return {"models": MODELS, "system": load_system_message(None), "status_tracker": RECAP,
             "tools": {name: [_function_to_openai(f) for f in s.tools] for name, s in _suites().items()}}
 
 
@@ -429,6 +551,46 @@ def _chat_payload(run_dir: Path, key: str):
             m["content"], m["error"] = [{"type": "text", "content": m["error"]}], None
     return {**injviewer._summary(p, run_dir), "messages": d["messages"],
             "env": {"user_task": d["user_task_id"], "injections": d.get("injections") or {}}}
+
+
+SAVE_DIR = Path("chats")  # overridden in main()
+_NAME = re.compile(r"[\w-][\w.-]{0,119}")
+
+
+def _saved_path(name) -> Path | None:
+    return SAVE_DIR / (name + ".json") if isinstance(name, str) and _NAME.fullmatch(name) else None
+
+
+def _saved_list() -> list[dict]:
+    """The saved chats, newest first."""
+    out = []
+    for p in sorted(SAVE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict):
+            out.append({"name": p.stem, "title": d.get("title"), "suite": d.get("suite"),
+                        "turns": len(d.get("messages") or []), "mtime": webui.mtime_str(p)})
+    return out
+
+
+def _save(name, chat, overwrite: bool) -> str:
+    """Write the chat to SAVE_DIR/<name>.json; FileExistsError if it is there and overwrite is off."""
+    p = _saved_path(name)
+    if p is None:
+        raise ValueError(f"bad name {name!r}: letters, digits, _ . - only")
+    if not isinstance(chat, dict) or chat.get("suite") not in _suites() or not isinstance(chat.get("messages"), list):
+        raise ValueError("bad chat: needs a known suite and a list of messages")
+    if p.exists() and not overwrite:
+        raise FileExistsError(p)
+    doc = {"title": chat.get("title"), "suite": chat["suite"], "source": chat.get("source"), "env": chat.get("env") or {},
+           "saved_at": datetime.now().isoformat(timespec="seconds"), "messages": chat["messages"]}
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name("." + p.name + ".tmp")  # write then rename: a crash never leaves half a file
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
+    return str(p)
 
 
 def _run_tool(suite: str, env: dict, messages: list[dict], call_id: str) -> str:
@@ -499,10 +661,30 @@ class Handler(injviewer.Handler):  # /api/runs and /api/cases as in injviewer
                 return self._json(_chat_payload(run_dir, key))
             except (KeyError, ValueError, TypeError) as e:
                 return self._json({"error": f"bad result file: {type(e).__name__}: {e}"}, code=400)
+        if parsed.path == "/api/saved":
+            if "name" not in q:
+                return self._json(_saved_list())
+            p = _saved_path(q["name"][0])
+            if p is None or not p.is_file():
+                return self._json({"error": "no saved chat " + q["name"][0]}, code=404)
+            try:
+                return self._json(json.loads(p.read_text(encoding="utf-8")))
+            except ValueError as e:
+                return self._json({"error": f"bad saved file: {e}"}, code=400)
         super().do_GET()
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/save":
+            try:
+                b = self._body()
+                return self._json({"path": _save(b.get("name"), b.get("chat"), bool(b.get("overwrite")))})
+            except FileExistsError:
+                return self._json({"error": "exists"}, code=409)
+            except (ValueError, AttributeError) as e:
+                return self._json({"error": f"bad request: {e}"}, code=400)
+            except OSError as e:
+                return self._json({"error": f"{type(e).__name__}: {e}"}, code=500)
         if path not in ("/api/send", "/api/tool"):
             return self._not_found()
         try:
@@ -526,11 +708,13 @@ class Handler(injviewer.Handler):  # /api/runs and /api/cases as in injviewer
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chat editor for AgentDojo conversations, continued through OpenRouter.")
     ap.add_argument("--dir", default="runs", help="directory of run dirs (default: runs)")
+    ap.add_argument("--save-dir", default="chats", help="where Save writes chats (default: chats)")
     ap.add_argument("--port", type=int, default=8769)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
-    injviewer.RUNS_DIR = Path(args.dir)
+    global SAVE_DIR
+    injviewer.RUNS_DIR, SAVE_DIR = Path(args.dir), Path(args.save_dir)
     threading.Thread(target=_meta, daemon=True).start()  # warm up the agentdojo import
     webui.serve(Handler, args.host, args.port, f"{injviewer.RUNS_DIR}/")
 
