@@ -80,7 +80,9 @@ python -m ui.chateditor         # http://localhost:8769, model list in MODELS
 
 Run one case instead of a batch: pick a model (qwen3-235b / glm-4.5 on OpenRouter, same key as the chat editor),
 any attack registered by `my_attacks`, `chatinject_attacks` or agentdojo (or none, benign), a suite, user task and
-injection task. The case runs as `run_agentdojo.py` runs one and is drawn like injviewer while it runs. Each request
+injection task. Constructor arguments for the attack go in the "params" box as a JSON object, the same as
+`--attack-kwargs` (e.g. `{"payload_path": "../TAP/runs/turn_search/turn-m3-new-select/best_payload.json"}`);
+choosing an attack prefills its parameters. The case runs as `run_agentdojo.py` runs one and is drawn like injviewer while it runs. Each request
 is kept in its own run dir under `runs/playground/`, listed in the sidebar's history. An attack module that changed
 on disk is re-imported before the next run, so edits to `my_attacks.py` need no restart.
 
@@ -128,7 +130,7 @@ python run_agentdojo.py --model-id qwen/qwen3-235b-a22b-2507 \
   --attack-kwargs '{"payload_path":"../TAP/runs/turn_search/turn-train18/best_payload.json"}'
 ```
 
-`from_search` similarly accepts `template_path` (its existing universal TAP template remains the default):
+`from_search` similarly requires `template_path`:
 
 ```bash
 python run_agentdojo.py --model-id qwen/qwen3-235b-a22b-2507 \
@@ -165,44 +167,17 @@ security: if the malicious task are completed
 # Eval result
 
 ON all cases, Qwen3-235B-A22B-2507
-| Overall | Benign | Direct | OneTurn | FromSearch | MultiTurnSearch | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default | IndependenceToken |
-|---|---|---|---|---|---|---|---|---|---|---|
-| ASR ↑ | – | 11.4 (108/949) | 19.2 (182/949) | 41.1 (390/949) | 44.0 (418/949) | 55.1 (523/949) | 35.9 (341/949) | 47.5 (451/949) | 49.3 (468/949)| 62.7 (595/949) |
-| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 65.8 (624/949) | 52.3 (496/949) | 32.7 (310/949) | 34.0 (323/949) | 42.7 (405/949) | 34.8 (330/949) |18.1 (172/949) | 9.1 (86/949) |
+| Overall | [Benign](runs/qwen3_benign) | [Direct](runs/qwen_dummy) | [OneTurn](runs/qwen_one_turn) | [FromSearch](runs/qwen_universal_TAP) | [MultiTurnSearch](runs/qwen_multiturnsearch) | [MultiTurnSearch_big](runs/qwen_multiturnsearch_big) | [MultiTurnSearch_m3-new-select](runs/qwen__m3-new-select) | [Important Instr](runs/qwen3_importanceinstr) | [ChatInject](runs/qwen3_chatinject) | [ChatInject_multi_turn](runs/qwen3_chatinject_mt7) | [MyAttack_default](runs/qwen3_mydefault) | [IndependenceToken](runs/qwen_independencetoken) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ASR ↑ | – | 11.4 (108/949) | 19.2 (182/949) | 41.1 (390/949) | 44.0 (418/949) | 43.8 (416/949) | 29.4 (279/949) | 55.1 (523/949) | 35.9 (341/949) | 47.5 (451/949) | 49.3 (468/949)| 62.7 (595/949) |
+| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 65.8 (624/949) | 52.3 (496/949) | 32.7 (310/949) | 31.7 (301/949) | 54.7 (519/949) | 34.0 (323/949) | 42.7 (405/949) | 34.8 (330/949) |18.1 (172/949) | 9.1 (86/949) |
 
-OneTurn vs Direct, paired by case (exact McNemar): ASR 113 cases gained / 39 lost, p = 1.5e-9;
-utility 46 gained / 153 lost, p = 1.3e-14. Run dirs: `runs/qwen_one_turn` vs `runs/qwen_dummy`.
+MultiTurnSearch_m3-new-select: payload `TAP/runs/turn_search/turn-m3-new-select/best_payload.json` (searched on MiniMax-M3);
+3 workspace records incomplete (user_task_38 × injection_task_0/5/7), counted as failures.
 
-FromSearch: the universal TAP template (`TAP/runs/universal/search-20261111-053931/best_template.json`,
-searched on the 18 pairs of `train18`, no travel) wrapped around each injection goal. Run dir: `runs/qwen_universal_TAP`.
-
-| ASR by suite | Direct | OneTurn | FromSearch | MultiTurnSearch | ChatInject_multi_turn |
-|---|---|---|---|---|---|
-| Banking (144) | 29.2 | 51.4 | 59.7 | 68.8 | 66.7 |
-| Slack (105) | 46.7 | 48.6 | 81.0 | 94.3 | 92.4 |
-| Travel (140) | 7.9 | 13.6 | 62.9 | 54.3 | 80.0 |
-| Workspace (560) | 1.1 | 6.8 | 23.4 | 25.7 | 26.1 |
-| Held out, without the 18 train pairs (931) | 10.6 (99) | 18.4 (171) | 40.1 (373) | 43.3 (403) | 46.8 (436) |
-
-FromSearch, paired by case (exact McNemar on ASR): vs Direct 290 gained / 8 lost, p = 5.7e-75;
-vs OneTurn 250 gained / 42 lost, p = 3.4e-37 (banking alone not significant, 25 / 13, p = 0.07).
-
-MultiTurnSearch: `from_multi_turn_search` with the multi-turn payload searched on `train18` against MiniMax-M3
-(`TAP/runs/turn_search/turn-train18/best_payload.json`), so this is transfer to Qwen. Run dir: `runs/qwen_multiturnsearch`;
-4 workspace records incomplete (user_task_35/38 × injection_task_11/12), counted as failures.
-Paired by case (exact McNemar on ASR): vs Direct 326 gained / 16 lost, p = 2.8e-76;
-vs FromSearch 142 gained / 114 lost, p = 0.09 (not significant overall; banking 22 / 9, p = 0.03 and
-slack 20 / 6, p = 0.009 favor MultiTurnSearch, travel 17 / 29, p = 0.10 favors FromSearch).
-
-ChatInject_multi_turn: `chat_inject_qwen3_with_utility_system_multiturn_7` (`-ml chatinject_attacks`), the paper's
-7-turn persuasive dialogue per goal wrapped in Qwen3 role tags. Run dir: `runs/qwen3_chatinject_mt7`.
-The paper only released dialogues for banking/slack/travel (21 goals, GPT-4.1); the 14 workspace dialogues were
-generated here with the paper's prompt (Table 12) by Qwen3-235B itself, i.e. the target model
-(`multi_turn_data/generate_dialogues.py`, entries tagged `"generator"`; 3 refusals regenerated). Its 78.4 on the
-three suites drops to 47.5 overall because workspace is only 26.1.
 
 ON all cases, MiniMax-M3
-| Overall | Direct |
+| Overall | [Direct](runs/m3_dummy) |
 |---|---|
 | ASR ↑ | 1.6 (15/949) |
 | Utility ↓ | 82.1 (779/949) |
@@ -212,7 +187,7 @@ ON all cases, MiniMax-M3
 
 ON banking (16x9) + slack (21x5) + travel (20x7) = 389 cases
 ON qwen
-| Overall | Benign | Important Instr | ChatInject | ChatInject_multi_turn | MyAttack_default | MyAttack_on3rdllm | IndependenceToken | SmarterTool |
+| Overall | [Benign](runs/qwen3_benign) | [Important Instr](runs/qwen3_importanceinstr) | [ChatInject](runs/qwen3_chatinject) | [ChatInject_multi_turn](runs/qwen3_chatinject_mt7) | [MyAttack_default](runs/qwen3_mydefault) | [MyAttack_on3rdllm](runs/qwen3_myattackon3rdllm) | [IndependenceToken](runs/qwen_independencetoken) | [SmarterTool](runs/qwen_smarter_tool) |
 |---|---|---|---|---|---|---|---|---|
 | ASR ↑ | – | 78.1 (304/389) | 55.5 (216/389) | 78.4 (305/389) | 67.6 (263/389) | 72.2 (281/389) | 77.6 (302/389) | 63.2 (246/389) |
 | Utility ↓ | 75.4 (43/57) | 46.5 (181/389) | 26.7 (104/389) | 33.2 (129/389) | 19.0 (74/389) | 9.3 (36/389) | 9.8 (38/389) | 27.5 (107/389) |

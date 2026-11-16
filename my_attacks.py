@@ -482,8 +482,6 @@ class TokenIndependentLast(MyAttackLast):
 
     name = "token_independent_last"
 
-FROM_SEARCH_TEMPLATE = "/project/project_462001732/reyang/TAP/runs/universal/search-20261111-053931/best_template.json"
-
 @register_attack
 class FromSearchAttack(BaseAttack):
     """Reuse a universal_tap search result (``best_template.json``) as the injection.
@@ -503,7 +501,7 @@ class FromSearchAttack(BaseAttack):
         template_path: str | Path
     ) -> None:
         super().__init__(task_suite, target_pipeline)
-        self.template_path = template_path
+        self.template_path = Path(template_path)
         data = json.loads(self.template_path.read_text(encoding="utf-8"))
         self.prefix = data.get("prefix", "")
         self.suffix = data.get("suffix", "")
@@ -543,3 +541,30 @@ class FromMultiTurnSearchAttack(OneTurnAttack):
 
     def render(self, goal: str) -> str:
         return self.middle_template.replace("{goal}", goal)
+
+
+@register_attack
+class FromUniversalClosingAttack(OneTurnAttack):
+    """Render a text dialogue from turn_search inside OneTurnAttack.
+
+    payload_path (required, via --attack-kwargs) points to a univerisal closing turn
+    """
+
+    name = "universal_closing"
+
+    def __init__(
+        self,
+        task_suite: TaskSuite[Env],
+        target_pipeline: BasePipelineElement,
+        payload_path: str | Path,
+    ) -> None:
+        super().__init__(task_suite, target_pipeline)
+        self.payload_path = Path(payload_path)
+        closing_turns = json.loads(self.payload_path.read_text(encoding="utf-8"))
+        turns = []
+        for message in closing_turns["messages"]:
+            turns.append({"role": message["role"], "content": message["content"], "tool_calls": []})
+        self.middle_template = turns + list(SEPARATOR_TURNS)
+
+    def render(self, goal: str) -> str:
+        return _render_generic(self.middle_template + [{"role": "user", "content": goal}])
