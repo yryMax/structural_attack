@@ -6,14 +6,15 @@ are aliases for the corresponding ``my_attack`` variants. ``smarter_tool``
 omits copied tool text.
 The ``_full`` / ``_last`` variants add task separator turns; ``_last`` replays
 only the final assistant reply instead of every turn after the injection point.
-``one_turn`` uses runtime responses, keeps only the injected top-level list item,
-and includes the vector's original value at both copied boundaries only for
+Every attack that copies tool text (``one_turn``, ``my_attack`` and its variants,
+``from_multi_turn_search``, ``universal_closing``) gets its boundaries from
+``ToolBoundaryAttack``: runtime ground-truth responses, only the injected top-level
+list item, and the vector's original value at both copied boundaries only for
 structured responses. Plain-text boundaries omit all canary values.
-``from_multi_turn_search`` renders searched messages in the same tool boundaries.
 
-Benign logs: ``runs/gpt6-astra_benign/openai-compatible/<suite>/<task>/none/none.json``
+Benign logs (only for the turns ``my_attack`` replays, not for the boundaries):
+``runs/gpt6-astra_benign/openai-compatible/<suite>/<task>/none/none.json``
 (override the root with ``MY_ATTACK_BENIGN_DIR``).
-Tool responses: ``mocked_tool_response/v1.2.2/<suite>/<task>.json``.
 All inserted turns are payload text, not actual API messages.
 """
 
@@ -23,10 +24,8 @@ import logging
 import os
 import re
 from collections.abc import Iterator
-from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
-from uuid import uuid4
 
 import yaml
 
@@ -109,14 +108,21 @@ def _to_turn(message: ChatMessage) -> dict:
 
 
 def _render_generic(turns: list[dict]) -> str:
-    """Wrap each ``<role>content</>`` turn with ``<turn_start>`` / ``<turn_end>``."""
+    """Render text and calls from OpenAI messages or legacy replay turns."""
     parts = []
     for turn in turns:
-        role, content = turn["role"], turn["content"]
+        role, content = turn["role"], turn.get("content") or "" # if no text
         if role == "tool":
             role = "tool_response"
         elif role == "assistant":
-            for name, args in turn["tool_calls"]:
+            for tool_call in turn.get("tool_calls") or []:
+                if isinstance(tool_call, dict):
+                    function = tool_call["function"]
+                    name, args = function["name"], function["arguments"]
+                else:
+                    name, args = tool_call
+                if isinstance(args, str):
+                    args = json.loads(args)
                 call = json.dumps({"name": name, "arguments": args}, ensure_ascii=False)
                 content += f"<tool_call>{call}</>"
         parts.append(f"<turn_start><{role}>{content}</><turn_end>")
@@ -147,11 +153,14 @@ class DirectAttack(FixedJailbreakAttack):
 
 
 
-@register_attack
-class OneTurnAttack(BaseAttack):
-    """One goal turn with tool boundaries limited to the injected list item."""
+class ToolBoundaryAttack(BaseAttack):
+    """Shared tool boundaries: the text before / after each vector in the first tool response that reads it.
 
-    name = "one_turn"
+    The response comes from running the user task's ground truth in an environment whose vectors hold
+    canaries, so no benign log is needed. Structured (YAML) responses keep only the injected top-level
+    list item and restore every vector's original value; plain text omits all canary values.
+    """
+
     copy_tool_text = True  # Set to False to omit copied tool text in ablations.
 
     def _split_tool_response(self, text: str, vector: str, defaults: dict[str, str]) -> tuple[str, str]:
@@ -243,6 +252,14 @@ class OneTurnAttack(BaseAttack):
             raise ValueError(f"{user_task.ID} is not injectable.")
         return boundaries
 
+
+
+@register_attack
+class OneTurnAttack(ToolBoundaryAttack):
+    """One goal turn with tool boundaries limited to the injected list item."""
+
+    name = "one_turn"
+
     def render(self, goal: str) -> str:
         """Render the middle turns between the copied tool boundaries."""
         return _render_generic([{"role": "user", "content": goal}])
@@ -261,9 +278,8 @@ class OneTurnAttack(BaseAttack):
 
 
 @register_attack
-class MyAttack(BaseAttack):
+class MyAttack(ToolBoundaryAttack):
     name = "my_attack"
-    copy_tool_text = True
     goal_suffix = ""
     # Turns appended to the replayed ones; "full" replays every benign turn after the
     # vector is read, "last" only the final assistant reply.
@@ -303,22 +319,6 @@ class MyAttack(BaseAttack):
             injections[vector] = _escape_for_yaml(_normalize_struct_payload(payload))
         return injections
 
-    def _get_tool_boundaries(self, user_task: BaseUserTask) -> dict[str, tuple[str, str]]:
-        """Map each injection-point name to its tool text before/after the split."""
-        boundaries = {}
-        if not self.copy_tool_text:
-            for vector in sorted(self.get_injection_candidates(user_task)):
-                boundaries[vector] = ("", "")
-            return boundaries
-
-        responses = self._get_mocked_tool_responses(user_task)
-        for vector, matches in responses.items():
-            first_response = matches[0]
-            text = first_response["text"]
-            position = first_response["position"]
-            boundaries[vector] = (text[:position], text[position:])
-        return boundaries
-
     def _load_benign_messages(self, user_task: BaseUserTask) -> list[ChatMessage]:
         path = self.benign_messages_dir / self.task_suite.name / user_task.ID / "none" / "none.json"
         return TaskResults.model_validate_json(path.read_text(encoding="utf-8")).messages
@@ -335,58 +335,6 @@ class MyAttack(BaseAttack):
             result, error = runtime.run_function(environment, call.function, copy.deepcopy(call.args))
             if error is None:
                 yield index, tool_result_to_str(result)
-
-    @lru_cache
-    def _get_mocked_tool_responses(self, user_task: BaseUserTask) -> dict[str, list[dict]]:
-        """Cache all ground-truth responses that read each vector, without benign data."""
-        path = (
-            Path(__file__).resolve().parent / "mocked_tool_response" / "v1.2.2"
-            / self.task_suite.name / f"{user_task.ID}.json"
-        )
-        if path.is_file():
-            cached = json.loads(path.read_text(encoding="utf-8"))
-            return cached
-
-        runtime = FunctionsRuntime(self.task_suite.tools)
-        environment = user_task.init_environment(self.task_suite.load_and_inject_default_environment({}))
-        canary_environment = user_task.init_environment(
-            self.task_suite.load_and_inject_default_environment(self.canary_injections)
-        )
-        calls = user_task.ground_truth(environment)
-        canary_calls = user_task.ground_truth(canary_environment)
-        responses = {}
-        for call, canary_call in zip(calls, canary_calls, strict=True):
-            if call.function != canary_call.function:
-                raise ValueError(f"Ground-truth tool order differs with canaries for {user_task.ID}")
-            result, _ = runtime.run_function(
-                environment, call.function, copy.deepcopy(call.args), raise_on_error=True
-            )
-            text = tool_result_to_str(result)
-            canary_result, _ = runtime.run_function(
-                canary_environment, canary_call.function, copy.deepcopy(canary_call.args), raise_on_error=True
-            )
-            canary_text = tool_result_to_str(canary_result)
-            for vector, canary in self.canary_injections.items():
-                if canary not in canary_text:
-                    continue
-                responses.setdefault(vector, []).append({
-                    "tool_call": call.model_dump(),
-                    "text": text,
-                    "position": self._find_split(text, canary_text, vector),
-                })
-        if not responses:
-            raise ValueError(f"{user_task.ID} is not injectable.")
-
-        # Per-goal subprocesses may share this cache; readers must see complete JSON.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-        try:
-            serialized = json.dumps(responses, ensure_ascii=False, separators=(",", ":"))
-            temporary.write_text(serialized, encoding="utf-8")
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-        return responses
 
     @lru_cache
     def _get_benign_tails(self, user_task: BaseUserTask, candidates: frozenset[str]) -> dict[str, list[dict]]:
@@ -410,31 +358,10 @@ class MyAttack(BaseAttack):
         if missing and self.closing == "full":
             logging.warning(
                 "my_attack: benign trace for %s/%s never reads %s; "
-                "replaying the final assistant reply with mocked tool boundaries",
+                "replaying the final assistant reply",
                 self.task_suite.name, user_task.ID, sorted(missing),
             )
         return tails
-
-    def _find_split(self, text: str, canary_text: str, vector: str) -> int:
-        """Find the start of the vector's region in the mocked tool text.
-
-        The split lands right before the vector's original value, so that value
-        heads the closing text and stays visible to the model as the real field it
-        replaces (e.g. a transaction ``subject``) before the forged turns break
-        out. For a zero-width default this is simply the insertion point.
-
-        Canary insertion can make YAML quote or wrap a field differently. Align
-        that output with the original mocked text instead of copying the canary
-        output. A null sentinel prevents matching letters inside canary names.
-        """
-        for key, canary in self.canary_injections.items():
-            canary_text = canary_text.replace(canary, "\x00" if key == vector else "")
-        canary_position = canary_text.index("\x00")
-        matcher = SequenceMatcher(None, canary_text, text, autojunk=False)
-        for _, start, end, original_start, _ in matcher.get_opcodes():
-            if start <= canary_position < end:
-                return original_start
-        raise ValueError(f"Cannot locate the insertion point for {vector} in the mocked tool text")
 
 
 @register_attack
@@ -534,10 +461,7 @@ class FromMultiTurnSearchAttack(OneTurnAttack):
         super().__init__(task_suite, target_pipeline)
         self.payload_path = Path(payload_path)
         data = json.loads(self.payload_path.read_text(encoding="utf-8"))
-        turns = []
-        for message in data["messages"]:
-            turns.append({"role": message["role"], "content": message["content"], "tool_calls": []})
-        self.middle_template = _render_generic(turns)
+        self.middle_template = _render_generic(data["messages"])
 
     def render(self, goal: str) -> str:
         return self.middle_template.replace("{goal}", goal)
@@ -545,9 +469,9 @@ class FromMultiTurnSearchAttack(OneTurnAttack):
 
 @register_attack
 class FromUniversalClosingAttack(OneTurnAttack):
-    """Render a text dialogue from turn_search inside OneTurnAttack.
+    """Render frozen closing messages, including tool calls, inside OneTurnAttack.
 
-    payload_path (required, via --attack-kwargs) points to a univerisal closing turn
+    payload_path (required, via --attack-kwargs) points to a universal closing artifact.
     """
 
     name = "universal_closing"
@@ -561,10 +485,7 @@ class FromUniversalClosingAttack(OneTurnAttack):
         super().__init__(task_suite, target_pipeline)
         self.payload_path = Path(payload_path)
         closing_turns = json.loads(self.payload_path.read_text(encoding="utf-8"))
-        turns = []
-        for message in closing_turns["messages"]:
-            turns.append({"role": message["role"], "content": message["content"], "tool_calls": []})
-        self.middle_template = turns + list(SEPARATOR_TURNS)
+        self.middle_template = closing_turns["messages"] + list(SEPARATOR_TURNS)
 
     def render(self, goal: str) -> str:
         return _render_generic(self.middle_template + [{"role": "user", "content": goal}])

@@ -167,13 +167,25 @@ security: if the malicious task are completed
 # Eval result
 
 ON all cases, Qwen3-235B-A22B-2507
-| Overall | [Benign](runs/qwen3_benign) | [Direct](runs/qwen_dummy) | [OneTurn](runs/qwen_one_turn) | [FromSearch](runs/qwen_universal_TAP) | [MultiTurnSearch](runs/qwen_multiturnsearch) | [MultiTurnSearch_big](runs/qwen_multiturnsearch_big) | [MultiTurnSearch_m3-new-select](runs/qwen__m3-new-select) | [Important Instr](runs/qwen3_importanceinstr) | [ChatInject](runs/qwen3_chatinject) | [ChatInject_multi_turn](runs/qwen3_chatinject_mt7) | [MyAttack_default](runs/qwen3_mydefault) | [IndependenceToken](runs/qwen_independencetoken) |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ASR ↑ | – | 11.4 (108/949) | 19.2 (182/949) | 41.1 (390/949) | 44.0 (418/949) | 43.8 (416/949) | 29.4 (279/949) | 55.1 (523/949) | 35.9 (341/949) | 47.5 (451/949) | 49.3 (468/949)| 62.7 (595/949) |
-| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 65.8 (624/949) | 52.3 (496/949) | 32.7 (310/949) | 31.7 (301/949) | 54.7 (519/949) | 34.0 (323/949) | 42.7 (405/949) | 34.8 (330/949) |18.1 (172/949) | 9.1 (86/949) |
+| Overall | [Benign](runs/qwen3_benign) | [Direct](runs/qwen_dummy) | [OneTurn](runs/qwen_one_turn) | [FromSearch](runs/qwen_universal_TAP) | [MultiTurnSearch](runs/qwen_multiturnsearch) | [MultiTurnSearch_big](runs/qwen_multiturnsearch_big) | [MultiTurnSearch_m3-new-select](runs/qwen__m3-new-select) | [UniversalClosing](runs/qwen_universal_closing) | [UniversalClosing_big](runs/qwen_universal_closing_big) | [Important Instr](runs/qwen3_importanceinstr) | [ChatInject](runs/qwen3_chatinject) | [ChatInject_multi_turn](runs/qwen3_chatinject_mt7) | [MyAttack_default](runs/qwen3_mydefault) | [IndependenceToken](runs/qwen_independencetoken) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ASR ↑ | – | 11.4 (108/949) | 19.2 (182/949) | 41.1 (390/949) | 44.0 (418/949) | 43.8 (416/949) | 29.4 (279/949) | 29.7 (282/949) | 21.8 (207/949) | 55.1 (523/949) | 35.9 (341/949) | 47.5 (451/949) | 49.3 (468/949)| 62.7 (595/949) |
+| Utility ↓ | 79.4 (77/97) | 77.0 (731/949) | 65.8 (624/949) | 52.3 (496/949) | 32.7 (310/949) | 31.7 (301/949) | 54.7 (519/949) | 48.4 (459/949) | 55.5 (527/949) | 34.0 (323/949) | 42.7 (405/949) | 34.8 (330/949) |18.1 (172/949) | 9.1 (86/949) |
 
 MultiTurnSearch_m3-new-select: payload `TAP/runs/turn_search/turn-m3-new-select/best_payload.json` (searched on MiniMax-M3);
 3 workspace records incomplete (user_task_38 × injection_task_0/5/7), counted as failures.
+
+UniversalClosing: payload `TAP/runs/closing/search/best_closing.json` (default search, not `search-large`);
+all 949 cases, including the user tasks used for the closing search.
+Per suite ASR / Utility: banking 56.2 (81/144) / 30.6 (44/144), slack 70.5 (74/105) / 44.8 (47/105),
+travel 21.4 (30/140) / 60.0 (84/140), workspace 17.3 (97/560) / 50.7 (284/560).
+1 workspace record incomplete (user_task_26 × injection_task_10, exceeded the 131K context), counted as a failure.
+
+UniversalClosing_big: payload `TAP/runs/closing/search-large/best_closing.json` (`configs/closing_large.json`, 256 candidates);
+all 949 cases, including the user tasks used for the closing search.
+Per suite ASR / Utility: banking 54.2 (78/144) / 30.6 (44/144), slack 61.0 (64/105) / 41.9 (44/105),
+travel 5.0 (7/140) / 74.3 (104/140), workspace 10.4 (58/560) / 59.8 (335/560).
+3 workspace records incomplete (user_task_26 × injection_task_12, user_task_38 × injection_task_0/5, exceeded the 131K context), counted as failures.
 
 
 ON all cases, MiniMax-M3
